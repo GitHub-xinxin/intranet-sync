@@ -35,16 +35,27 @@ jobs:
         uses: NuGet/setup-nuget@v2
 
       - name: Restore packages
-        run: nuget restore IntranetSyncAgent.sln -NonInteractive
+        run: |
+          nuget restore IntranetSyncAgent.sln -PackagesDirectory packages -NonInteractive
+          if not exist "packages\Aliyun.OSS.SDK.2.14.1\lib\net461\Aliyun.OSS.dll" (
+            echo ERROR: Aliyun.OSS.dll missing after restore
+            dir /s /b packages
+            exit /b 1
+          )
+          if not exist "packages\Newtonsoft.Json.13.0.3\lib\net45\Newtonsoft.Json.dll" (
+            echo ERROR: Newtonsoft.Json.dll missing after restore
+            exit /b 1
+          )
 
       - name: Build Release
         run: >
           msbuild IntranetSyncAgent.sln
-          /t:Build
+          /t:Rebuild
           /p:Configuration=Release
           /p:Platform="Any CPU"
+          /p:RestorePackages=false
           /m
-          /v:minimal
+          /v:normal
 
       - name: Verify service exe
         run: |
