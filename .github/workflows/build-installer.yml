@@ -1,0 +1,80 @@
+# Build Release + Inno Setup → IntranetSyncAgent-Setup.exe
+# Download: Actions → latest run → Artifacts → IntranetSyncAgent-Setup
+name: Build Installer
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, master]
+    paths:
+      - "src/**"
+      - "installer/**"
+      - "build/**"
+      - "IntranetSyncAgent.sln"
+      - "nuget.config"
+      - ".github/workflows/build-installer.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-2022
+    defaults:
+      run:
+        shell: cmd
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup MSBuild
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Setup NuGet
+        uses: NuGet/setup-nuget@v2
+
+      - name: Restore packages
+        run: nuget restore IntranetSyncAgent.sln -NonInteractive
+
+      - name: Build Release
+        run: >
+          msbuild IntranetSyncAgent.sln
+          /t:Build
+          /p:Configuration=Release
+          /p:Platform="Any CPU"
+          /m
+          /v:minimal
+
+      - name: Verify service exe
+        run: |
+          if not exist "src\IntranetSync.Service\bin\Release\IntranetSync.Service.exe" (
+            echo ERROR: Release output missing IntranetSync.Service.exe
+            exit /b 1
+          )
+
+      - name: Install Inno Setup
+        shell: pwsh
+        run: |
+          choco install innosetup --version=6.2.2 -y --no-progress
+          if (-not (Test-Path "C:\Program Files (x86)\Inno Setup 6\ISCC.exe")) {
+            throw "ISCC.exe not found after Inno Setup install"
+          }
+
+      - name: Compile Setup.exe
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" "installer\IntranetSyncAgent.iss"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if (-not (Test-Path "dist\IntranetSyncAgent-Setup.exe")) {
+            throw "Expected dist\IntranetSyncAgent-Setup.exe"
+          }
+
+      - name: Upload Setup.exe
+        uses: actions/upload-artifact@v4
+        with:
+          name: IntranetSyncAgent-Setup
+          path: dist/IntranetSyncAgent-Setup.exe
+          if-no-files-found: error
+          retention-days: 30

@@ -1,0 +1,11 @@
+packages/
+**/bin/
+**/obj/
+dist/
+*.user
+*.suo
+.vs/
+*.log
+nuget.exe
+.DS_Store
+**/.DS_Store

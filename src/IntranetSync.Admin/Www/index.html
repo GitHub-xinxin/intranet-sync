@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Intranet Sync Agent</title>
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <header class="top">
+    <div>
+      <h1>Intranet Sync Agent</h1>
+      <p class="sub">内网 SQL → 云端同步 / 本机配置台（仅 127.0.0.1）</p>
+    </div>
+    <div class="status" id="statusBox">…</div>
+  </header>
+
+  <main>
+    <section>
+      <h2>1. SQL Server</h2>
+      <div class="grid">
+        <label>Server <input id="sql.server" /></label>
+        <label>Database <input id="sql.database" /></label>
+        <label>User Id <input id="sql.userId" /></label>
+        <label>Password <input id="sql.password" type="password" placeholder="unchanged if blank/****" /></label>
+        <label class="check"><input id="sql.integratedSecurity" type="checkbox" /> Integrated Security</label>
+      </div>
+      <button type="button" id="btnTestSql">测试连接 / Test</button>
+      <pre id="sqlTestResult" class="out"></pre>
+    </section>
+
+    <section>
+      <h2>2. View 映射</h2>
+      <div class="grid">
+        <label>View name <input id="view.viewName" placeholder="dbo.MyView" /></label>
+        <label>PK column <input id="view.primaryKeyColumn" /></label>
+        <label>Incremental column <input id="view.incrementalColumn" placeholder="UpdatedAt (empty = row hash)" /></label>
+        <label>PDF URL columns (comma) <input id="view.pdfUrlColumns" placeholder="PdfUrl,AttachUrl" /></label>
+        <label>Page size <input id="view.pageSize" type="number" min="50" max="2000" /></label>
+      </div>
+    </section>
+
+    <section>
+      <h2>3. Cloud API / OSS</h2>
+      <div class="grid">
+        <label>API Base URL <input id="cloud.apiBaseUrl" /></label>
+        <label>Service Token <input id="cloud.serviceToken" type="password" /></label>
+        <label>Tenant Id <input id="cloud.tenantId" /></label>
+        <label>OSS Endpoint <input id="oss.endpoint" /></label>
+        <label>OSS Bucket <input id="oss.bucket" /></label>
+        <label>OSS Prefix <input id="oss.prefix" /></label>
+        <label class="check"><input id="oss.useSts" type="checkbox" checked /> Use STS (GET /sync/oss-token)</label>
+        <label>AccessKey Id <input id="oss.accessKeyId" /></label>
+        <label>AccessKey Secret <input id="oss.accessKeySecret" type="password" /></label>
+        <label>Public Base URL <input id="oss.publicBaseUrl" /></label>
+      </div>
+    </section>
+
+    <section>
+      <h2>4. PDF / Sync 运行</h2>
+      <div class="grid">
+        <label>Max PDF MB <input id="pdf.maxMb" type="number" min="1" max="500" /></label>
+        <label>PDF concurrency <input id="pdf.maxConcurrency" type="number" min="1" max="8" /></label>
+        <label>PDF auth <select id="pdf.authMode"><option value="anonymous">anonymous</option><option value="basic">basic</option><option value="ntlm">ntlm</option></select></label>
+        <label>Interval seconds <input id="sync.intervalSeconds" type="number" min="30" /></label>
+        <label class="check"><input id="sync.enabled" type="checkbox" /> Enabled</label>
+        <label class="check"><input id="sync.failBatchOnPdfError" type="checkbox" /> Fail whole batch on PDF error</label>
+      </div>
+      <div class="actions">
+        <button type="button" id="btnSave" class="primary">保存配置 / Save</button>
+        <button type="button" id="btnStart">启动同步 / Start</button>
+        <button type="button" id="btnStop">停止 / Stop</button>
+        <button type="button" id="btnRun">立即跑一轮 / Run once</button>
+      </div>
+      <pre id="actionResult" class="out"></pre>
+    </section>
+
+    <section>
+      <h2>5. 最近日志 / Failures</h2>
+      <div class="split">
+        <div>
+          <h3>Logs</h3>
+          <pre id="logs" class="out tall"></pre>
+        </div>
+        <div>
+          <h3>PDF Failures</h3>
+          <pre id="failures" class="out tall"></pre>
+        </div>
+      </div>
+    </section>
+  </main>
+  <script src="/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,88 @@
+:root {
+  --bg: #0f1419;
+  --panel: #1a222c;
+  --text: #e7eef7;
+  --muted: #8b9bb0;
+  --accent: #2f6fed;
+  --line: #2a3544;
+  --ok: #3ecf8e;
+  --warn: #f0b429;
+}
+
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  font-family: "Segoe UI", "Microsoft YaHei", sans-serif;
+  background: radial-gradient(1200px 600px at 10% -10%, #1c2a44, transparent), var(--bg);
+  color: var(--text);
+  line-height: 1.45;
+}
+.top {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 1.25rem 1.5rem;
+  border-bottom: 1px solid var(--line);
+  align-items: flex-start;
+}
+h1 { margin: 0; font-size: 1.4rem; letter-spacing: 0.02em; }
+.sub { margin: 0.35rem 0 0; color: var(--muted); font-size: 0.92rem; }
+.status {
+  min-width: 220px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 0.75rem 1rem;
+  font-size: 0.85rem;
+  white-space: pre-wrap;
+}
+main { padding: 1rem 1.5rem 3rem; max-width: 1100px; }
+section {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 1rem 1.1rem 1.2rem;
+  margin: 1rem 0;
+}
+h2 { margin: 0 0 0.85rem; font-size: 1.05rem; }
+h3 { margin: 0 0 0.5rem; font-size: 0.95rem; color: var(--muted); }
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 0.75rem 1rem;
+}
+label { display: flex; flex-direction: column; gap: 0.3rem; font-size: 0.82rem; color: var(--muted); }
+label.check { flex-direction: row; align-items: center; gap: 0.5rem; margin-top: 1.4rem; }
+input, select, button, textarea {
+  font: inherit;
+  color: var(--text);
+  background: #10161e;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 0.45rem 0.55rem;
+}
+button {
+  cursor: pointer;
+  margin: 0.85rem 0.4rem 0 0;
+  background: #243041;
+}
+button.primary { background: var(--accent); border-color: #3b7bff; }
+button:hover { filter: brightness(1.08); }
+.actions { display: flex; flex-wrap: wrap; gap: 0.25rem; }
+.out {
+  margin-top: 0.75rem;
+  background: #0c1117;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 0.65rem 0.75rem;
+  font-size: 0.78rem;
+  overflow: auto;
+  max-height: 180px;
+  white-space: pre-wrap;
+}
+.out.tall { max-height: 320px; min-height: 180px; }
+.split { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+@media (max-width: 800px) {
+  .split { grid-template-columns: 1fr; }
+  .top { flex-direction: column; }
+}

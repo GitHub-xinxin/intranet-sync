@@ -1,0 +1,176 @@
+(function () {
+  function $(id) { return document.getElementById(id); }
+
+  function setVal(path, value) {
+    var el = $(path);
+    if (!el) return;
+    if (el.type === "checkbox") el.checked = !!value;
+    else el.value = value == null ? "" : value;
+  }
+
+  function getVal(path) {
+    var el = $(path);
+    if (!el) return null;
+    if (el.type === "checkbox") return el.checked;
+    if (el.type === "number") return el.value === "" ? null : Number(el.value);
+    return el.value;
+  }
+
+  function fill(cfg) {
+    setVal("sql.server", cfg.sql && cfg.sql.server);
+    setVal("sql.database", cfg.sql && cfg.sql.database);
+    setVal("sql.userId", cfg.sql && cfg.sql.userId);
+    setVal("sql.password", "");
+    setVal("sql.integratedSecurity", cfg.sql && cfg.sql.integratedSecurity);
+
+    setVal("view.viewName", cfg.view && cfg.view.viewName);
+    setVal("view.primaryKeyColumn", cfg.view && cfg.view.primaryKeyColumn);
+    setVal("view.incrementalColumn", cfg.view && cfg.view.incrementalColumn);
+    setVal("view.pdfUrlColumns", (cfg.view && cfg.view.pdfUrlColumns || []).join(","));
+    setVal("view.pageSize", cfg.view && cfg.view.pageSize);
+
+    setVal("cloud.apiBaseUrl", cfg.cloud && cfg.cloud.apiBaseUrl);
+    setVal("cloud.serviceToken", "");
+    setVal("cloud.tenantId", cfg.cloud && cfg.cloud.tenantId);
+
+    setVal("oss.endpoint", cfg.oss && cfg.oss.endpoint);
+    setVal("oss.bucket", cfg.oss && cfg.oss.bucket);
+    setVal("oss.prefix", cfg.oss && cfg.oss.prefix);
+    setVal("oss.useSts", cfg.oss && cfg.oss.useSts);
+    setVal("oss.accessKeyId", cfg.oss && cfg.oss.accessKeyId);
+    setVal("oss.accessKeySecret", "");
+    setVal("oss.publicBaseUrl", cfg.oss && cfg.oss.publicBaseUrl);
+
+    var maxMb = cfg.pdf && cfg.pdf.maxBytes ? Math.round(cfg.pdf.maxBytes / (1024 * 1024)) : 50;
+    setVal("pdf.maxMb", maxMb);
+    setVal("pdf.maxConcurrency", cfg.pdf && cfg.pdf.maxConcurrency);
+    setVal("pdf.authMode", (cfg.pdf && cfg.pdf.authMode) || "anonymous");
+    setVal("sync.intervalSeconds", cfg.sync && cfg.sync.intervalSeconds);
+    setVal("sync.enabled", cfg.sync && cfg.sync.enabled);
+    setVal("sync.failBatchOnPdfError", cfg.sync && cfg.sync.failBatchOnPdfError);
+  }
+
+  function collect() {
+    var pdfCols = (getVal("view.pdfUrlColumns") || "").split(",").map(function (s) { return s.trim(); }).filter(Boolean);
+    var maxMb = getVal("pdf.maxMb") || 50;
+    return {
+      sql: {
+        server: getVal("sql.server"),
+        database: getVal("sql.database"),
+        userId: getVal("sql.userId"),
+        password: getVal("sql.password") || "********",
+        integratedSecurity: getVal("sql.integratedSecurity")
+      },
+      view: {
+        viewName: getVal("view.viewName"),
+        primaryKeyColumn: getVal("view.primaryKeyColumn"),
+        incrementalColumn: getVal("view.incrementalColumn"),
+        pdfUrlColumns: pdfCols,
+        pageSize: getVal("view.pageSize") || 300
+      },
+      cloud: {
+        apiBaseUrl: getVal("cloud.apiBaseUrl"),
+        serviceToken: getVal("cloud.serviceToken") || "********",
+        tenantId: getVal("cloud.tenantId")
+      },
+      oss: {
+        endpoint: getVal("oss.endpoint"),
+        bucket: getVal("oss.bucket"),
+        prefix: getVal("oss.prefix"),
+        useSts: getVal("oss.useSts"),
+        accessKeyId: getVal("oss.accessKeyId"),
+        accessKeySecret: getVal("oss.accessKeySecret") || "********",
+        publicBaseUrl: getVal("oss.publicBaseUrl")
+      },
+      pdf: {
+        maxBytes: maxMb * 1024 * 1024,
+        maxConcurrency: getVal("pdf.maxConcurrency") || 3,
+        authMode: getVal("pdf.authMode")
+      },
+      sync: {
+        intervalSeconds: getVal("sync.intervalSeconds") || 180,
+        enabled: getVal("sync.enabled"),
+        failBatchOnPdfError: getVal("sync.failBatchOnPdfError")
+      },
+      admin: {
+        bindAddress: "127.0.0.1",
+        port: 8787,
+        adminPassword: "********"
+      }
+    };
+  }
+
+  function api(path, method, body) {
+    var opts = { method: method || "GET", headers: { "Content-Type": "application/json" } };
+    if (body !== undefined) opts.body = JSON.stringify(body);
+    return fetch(path, opts).then(function (r) {
+      return r.json().then(function (j) {
+        if (!r.ok) throw new Error((j && j.error) || r.statusText);
+        return j;
+      });
+    });
+  }
+
+  function refreshStatus() {
+    return api("/api/status").then(function (s) {
+      $("statusBox").textContent =
+        "running: " + s.running +
+        "\nenabled: " + s.enabled +
+        "\nlastRun: " + (s.lastRunUtc || "-") +
+        "\nwatermark: " + ((s.watermark && s.watermark.lastWatermark) || "-") +
+        "\n" + ((s.lastResult && s.lastResult.message) || "");
+    }).catch(function (e) {
+      $("statusBox").textContent = "status error: " + e.message;
+    });
+  }
+
+  function refreshLogs() {
+    return Promise.all([
+      api("/api/logs"),
+      api("/api/failures")
+    ]).then(function (pair) {
+      $("logs").textContent = (pair[0] || []).map(function (l) {
+        return l.utc + " [" + l.level + "] " + l.message;
+      }).join("\n");
+      $("failures").textContent = JSON.stringify(pair[1] || [], null, 2);
+    });
+  }
+
+  function show(el, obj) {
+    $(el).textContent = typeof obj === "string" ? obj : JSON.stringify(obj, null, 2);
+  }
+
+  document.addEventListener("DOMContentLoaded", function () {
+    api("/api/config").then(fill).then(refreshStatus).then(refreshLogs);
+
+    $("btnSave").onclick = function () {
+      api("/api/config", "POST", collect())
+        .then(function (c) { show("actionResult", c); return refreshStatus(); })
+        .catch(function (e) { show("actionResult", e.message); });
+    };
+    $("btnTestSql").onclick = function () {
+      api("/api/config", "POST", collect())
+        .then(function () { return api("/api/sql/test", "POST", {}); })
+        .then(function (r) { show("sqlTestResult", r); })
+        .catch(function (e) { show("sqlTestResult", e.message); });
+    };
+    $("btnStart").onclick = function () {
+      api("/api/sync/start", "POST", {})
+        .then(function (r) { show("actionResult", r); return refreshStatus(); })
+        .catch(function (e) { show("actionResult", e.message); });
+    };
+    $("btnStop").onclick = function () {
+      api("/api/sync/stop", "POST", {})
+        .then(function (r) { show("actionResult", r); return refreshStatus(); })
+        .catch(function (e) { show("actionResult", e.message); });
+    };
+    $("btnRun").onclick = function () {
+      show("actionResult", "running…");
+      api("/api/sync/run", "POST", {})
+        .then(function (r) { show("actionResult", r); return Promise.all([refreshStatus(), refreshLogs()]); })
+        .catch(function (e) { show("actionResult", e.message); });
+    };
+
+    setInterval(function () { refreshStatus(); refreshLogs(); }, 10000);
+  });
+})();
