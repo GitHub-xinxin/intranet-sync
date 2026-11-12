@@ -64,19 +64,28 @@ jobs:
             exit /b 1
           )
 
-      - name: Install Inno Setup
+      - name: Locate Inno Setup
         shell: pwsh
         run: |
-          choco install innosetup --version=6.2.2 -y --no-progress
-          if (-not (Test-Path "C:\Program Files (x86)\Inno Setup 6\ISCC.exe")) {
-            throw "ISCC.exe not found after Inno Setup install"
+          $candidates = @(
+            "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe",
+            "${env:ProgramFiles}\Inno Setup 6\ISCC.exe",
+            "C:\ProgramData\chocolatey\bin\ISCC.exe"
+          )
+          $iscc = $candidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+          if (-not $iscc) {
+            choco install innosetup -y --no-progress
+            $iscc = $candidates | Where-Object { Test-Path $_ } | Select-Object -First 1
           }
+          if (-not $iscc) { throw "ISCC.exe not found" }
+          "ISCC=$iscc" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          Write-Host "Using $iscc"
 
       - name: Compile Setup.exe
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path dist | Out-Null
-          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" "installer\IntranetSyncAgent.iss"
+          & "$env:ISCC" "installer\IntranetSyncAgent.iss"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           if (-not (Test-Path "dist\IntranetSyncAgent-Setup.exe")) {
             throw "Expected dist\IntranetSyncAgent-Setup.exe"
