@@ -4,7 +4,7 @@
 ; Aliyun / API credentials are configured later in Admin UI.
 
 #define MyAppName "Intranet Sync Agent"
-#define MyAppVersion "1.1.1"
+#define MyAppVersion "1.1.2"
 #define MyAppPublisher "Intranet Sync"
 #define MyAppExeName "IntranetSync.Service.exe"
 #define MyServiceName "IntranetSyncAgent"
