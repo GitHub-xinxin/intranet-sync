@@ -12,7 +12,13 @@
       <h1>Intranet Sync Agent</h1>
       <p class="sub">内网 SQL 视图 → 云端同步 / 本机配置台（仅 127.0.0.1）</p>
     </div>
-    <div class="status" id="statusBox">…</div>
+    <div class="status" id="statusBox">
+      <div class="status-head">
+        <span class="status-dot" id="statusDot" title="同步调度状态"></span>
+        <span class="status-title" id="statusTitle">检测中…</span>
+      </div>
+      <div class="status-body" id="statusBody"></div>
+    </div>
   </header>
 
   <main>
@@ -193,7 +199,7 @@
       <div class="actions">
         <button type="button" id="btnSave" class="primary">保存配置</button>
         <button type="button" id="btnStart">启动同步</button>
-        <button type="button" id="btnStop">停止</button>
+        <button type="button" id="btnStop" class="danger is-hidden">停止同步</button>
         <button type="button" id="btnRun">立即跑一轮</button>
       </div>
       <pre id="actionResult" class="out"></pre>

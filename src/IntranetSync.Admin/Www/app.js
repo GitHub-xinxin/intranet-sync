@@ -111,16 +111,48 @@
     });
   }
 
+  function updateSyncButtons(running) {
+    var startBtn = $("btnStart");
+    var stopBtn = $("btnStop");
+    if (!startBtn || !stopBtn) return;
+    if (running) {
+      startBtn.classList.add("is-hidden");
+      stopBtn.classList.remove("is-hidden");
+    } else {
+      stopBtn.classList.add("is-hidden");
+      startBtn.classList.remove("is-hidden");
+    }
+  }
+
   function refreshStatus() {
     return api("/api/status").then(function (s) {
-      $("statusBox").textContent =
-        "running: " + s.running +
-        "\nenabled: " + s.enabled +
-        "\nlastRun: " + (s.lastRunUtc || "-") +
-        "\nwatermark: " + ((s.watermark && s.watermark.lastWatermark) || "-") +
-        "\n" + ((s.lastResult && s.lastResult.message) || "");
+      var running = !!s.running;
+      var dot = $("statusDot");
+      var title = $("statusTitle");
+      var body = $("statusBody");
+
+      if (dot) {
+        dot.className = "status-dot " + (running ? "is-running" : "is-stopped");
+      }
+      if (title) {
+        title.textContent = running ? "同步运行中" : "同步已停止";
+      }
+      if (body) {
+        body.textContent =
+          "定时启用: " + (s.enabled ? "是" : "否") +
+          "\n上次运行: " + (s.lastRunUtc || "-") +
+          "\n水位: " + ((s.watermark && s.watermark.lastWatermark) || "-") +
+          "\n" + ((s.lastResult && s.lastResult.message) || "");
+      }
+      updateSyncButtons(running);
     }).catch(function (e) {
-      $("statusBox").textContent = "status error: " + e.message;
+      var dot = $("statusDot");
+      var title = $("statusTitle");
+      var body = $("statusBody");
+      if (dot) dot.className = "status-dot is-error";
+      if (title) title.textContent = "状态获取失败";
+      if (body) body.textContent = e.message;
+      updateSyncButtons(false);
     });
   }
 
