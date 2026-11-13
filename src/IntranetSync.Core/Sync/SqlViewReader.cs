@@ -50,15 +50,16 @@ namespace IntranetSync.Core.Sync
         {
             if (string.IsNullOrWhiteSpace(view.ViewName))
                 throw new InvalidOperationException("View name is required");
-            if (string.IsNullOrWhiteSpace(view.PrimaryKeyColumn))
-                throw new InvalidOperationException("Primary key column is required");
 
             bool useIncremental = !string.IsNullOrWhiteSpace(view.IncrementalColumn);
+            bool hasPk = !string.IsNullOrWhiteSpace(view.PrimaryKeyColumn);
+            if (!useIncremental && !hasPk)
+                throw new InvalidOperationException("未配置唯一标识列时，必须配置增量列（如 updated_at），才能按更新时间推送全部记录");
+
             int pageSize = view.PageSize > 0 ? view.PageSize : 300;
 
             // Bracket identifiers loosely — view/column names come from admin config, not end users.
             string viewName = Bracket(view.ViewName);
-            string pkCol = Bracket(view.PrimaryKeyColumn);
 
             string sqlText;
             if (useIncremental)
@@ -70,7 +71,8 @@ namespace IntranetSync.Core.Sync
             }
             else
             {
-                // Full page by PK for hash-mode; caller filters by row hash.
+                // Hash-mode cursor pages by unique column.
+                string pkCol = Bracket(view.PrimaryKeyColumn);
                 sqlText = string.Format(
                     "SELECT TOP ({0}) * FROM {1} WHERE {2} > @wm ORDER BY {2} ASC",
                     pageSize, viewName, pkCol);
@@ -120,7 +122,8 @@ namespace IntranetSync.Core.Sync
                                 JToken token = val == null ? JValue.CreateNull() : JToken.FromObject(val);
                                 fields[name] = token;
 
-                                if (string.Equals(name, view.PrimaryKeyColumn, StringComparison.OrdinalIgnoreCase))
+                                if (hasPk &&
+                                    string.Equals(name, view.PrimaryKeyColumn, StringComparison.OrdinalIgnoreCase))
                                     pk = val == null ? null : Convert.ToString(val);
                                 if (useIncremental &&
                                     string.Equals(name, view.IncrementalColumn, StringComparison.OrdinalIgnoreCase))
@@ -130,6 +133,7 @@ namespace IntranetSync.Core.Sync
                             if (!useIncremental)
                                 wm = pk;
 
+                            // 无唯一列时：仅按增量时间推送，pk 可为空（云端按追加/自行处理）
                             rows.Add(new ViewRow
                             {
                                 PrimaryKey = pk,

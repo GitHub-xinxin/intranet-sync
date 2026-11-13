@@ -61,9 +61,9 @@ namespace IntranetSync.Core.Config
     public sealed class ViewSettings
     {
         public string ViewName { get; set; } = "";
-        /// <summary>业务唯一列（不必是 SQL 主键约束），云端 upsert 用。</summary>
-        public string PrimaryKeyColumn { get; set; } = "person_id";
-        /// <summary>增量列；为空则使用行哈希回退。</summary>
+        /// <summary>可选。业务唯一列；留空表示不按唯一键去重，仅按增量列推送全部行。</summary>
+        public string PrimaryKeyColumn { get; set; } = "";
+        /// <summary>增量列；无唯一列时必填。为空则回退行哈希（需唯一列）。</summary>
         public string IncrementalColumn { get; set; } = "updated_at";
         /// <summary>PDF URL 列名列表（可多列）。</summary>
         public List<string> PdfUrlColumns { get; set; } = new List<string> { "PDF" };

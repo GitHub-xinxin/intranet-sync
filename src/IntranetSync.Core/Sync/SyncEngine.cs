@@ -69,10 +69,17 @@ namespace IntranetSync.Core.Sync
                 return result;
             }
 
+            bool useIncremental = !string.IsNullOrWhiteSpace(cfg.View.IncrementalColumn);
+            bool hasPk = !string.IsNullOrWhiteSpace(cfg.View.PrimaryKeyColumn);
+            if (!useIncremental && !hasPk)
+            {
+                result.Message = "无唯一标识列时必须配置增量列（如 updated_at）";
+                return result;
+            }
+
             using (var api = new CloudApiClient(cfg.Cloud, _log))
             {
                 var pipeline = new PdfPipeline(cfg.Pdf, cfg.Oss, cfg.Cloud, api, _pdfMap, _log, _dataDir);
-                bool useIncremental = !string.IsNullOrWhiteSpace(cfg.View.IncrementalColumn);
                 var wmRec = _watermarks.Get(cfg.View.ViewName);
                 string cursor = wmRec.LastWatermark ?? "";
 
@@ -95,11 +102,12 @@ namespace IntranetSync.Core.Sync
                     foreach (var row in rows)
                     {
                         ct.ThrowIfCancellationRequested();
-                        string rowHash = RowHasher.Compute(row.PrimaryKey, row.Fields);
+                        string rowHash = RowHasher.Compute(row.PrimaryKey ?? "", row.Fields);
 
+                        // 仅「无增量列 + 有唯一列」时用行哈希去重；纯增量推送不做唯一键去重
                         if (!useIncremental)
                         {
-                            if (!_rowHashes.HasChanged(row.PrimaryKey, rowHash))
+                            if (string.IsNullOrEmpty(row.PrimaryKey) || !_rowHashes.HasChanged(row.PrimaryKey, rowHash))
                             {
                                 lastWm = row.Watermark ?? lastWm;
                                 continue;
@@ -182,7 +190,7 @@ namespace IntranetSync.Core.Sync
 
                         foreach (var br in batchRows)
                         {
-                            if (!useIncremental)
+                            if (!useIncremental && !string.IsNullOrEmpty(br.PrimaryKey))
                                 _rowHashes.Commit(br.PrimaryKey, br.RowHash);
                         }
                         _rowHashes.Persist();

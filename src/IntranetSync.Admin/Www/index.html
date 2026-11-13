@@ -58,8 +58,8 @@
     <section>
       <h2>2. View 映射（要同步的视图）</h2>
       <p class="hint-block">
-        告诉程序从哪张<strong>SQL Server 视图</strong>读数据、哪一列是主键、如何判断增量，以及哪些列是内网 PDF 链接。
-        同步时会按这些配置 SELECT，并把 PDF 上传 OSS 后把链接换成云端 URL。
+        告诉程序从哪张<strong>SQL Server 视图</strong>读数据、如何按更新时间增量拉取，以及哪些列是内网 PDF 链接。
+        若不需要唯一键：唯一标识列<strong>留空</strong>，填好增量列（如 updated_at），则水位之后查出的记录会全部推送。
       </p>
       <div class="grid">
         <label>
@@ -68,14 +68,14 @@
           <span class="hint">完整视图名，如 dbo.OrderListView（可带 schema）</span>
         </label>
         <label>
-          <span class="lbl">唯一标识列 <em>业务主键</em></span>
-          <input id="view.primaryKeyColumn" placeholder="person_id" />
-          <span class="hint">不必是数据库主键约束；填视图里能唯一区分一行的列即可（如 person_id），云端按此更新/插入。不可留空</span>
+          <span class="lbl">唯一标识列 <em>可选</em></span>
+          <input id="view.primaryKeyColumn" placeholder="可留空" />
+          <span class="hint">可留空。留空=不按唯一键去重，只按增量时间把查到的行全部推送；若填写则云端可用该列做 upsert</span>
         </label>
         <label>
-          <span class="lbl">增量列 <em>Incremental column</em></span>
-          <input id="view.incrementalColumn" placeholder="updated_at（留空则用行哈希）" />
-          <span class="hint">如 updated_at；只同步大于上次水位的行。留空则按整行内容哈希比对变化</span>
+          <span class="lbl">增量列 <em>必填（无唯一列时）</em></span>
+          <input id="view.incrementalColumn" placeholder="updated_at" />
+          <span class="hint">如 updated_at；只同步大于上次水位的行。唯一标识列留空时此项必填</span>
         </label>
         <label>
           <span class="lbl">PDF 链接列 <em>PDF URL columns</em></span>
