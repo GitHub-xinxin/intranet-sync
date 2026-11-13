@@ -8,7 +8,7 @@
     <OutputType>Library</OutputType>
     <RootNamespace>IntranetSync.Admin</RootNamespace>
     <AssemblyName>IntranetSync.Admin</AssemblyName>
-    <TargetFrameworkVersion>v4.8</TargetFrameworkVersion>
+    <TargetFrameworkVersion>v4.5.1</TargetFrameworkVersion>
     <FileAlignment>512</FileAlignment>
     <Deterministic>true</Deterministic>
   </PropertyGroup>

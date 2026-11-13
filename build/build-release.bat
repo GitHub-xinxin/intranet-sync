@@ -1,6 +1,6 @@
 @echo off
-REM Restore NuGet packages and MSBuild Release for IntranetSyncAgent (.NET Framework 4.8).
-REM Run on Windows with VS/Build Tools + .NET 4.8 targeting pack.
+REM Restore NuGet packages and MSBuild Release for IntranetSyncAgent (.NET Framework 4.5.1).
+REM Run on Windows with VS/Build Tools + .NET 4.5.1 targeting pack.
 setlocal EnableExtensions
 cd /d "%~dp0.."
 

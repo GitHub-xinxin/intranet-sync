@@ -1,6 +1,7 @@
 using System;
 using System.ServiceProcess;
 using IntranetSync.Admin;
+using IntranetSync.Core;
 using IntranetSync.Core.Config;
 using IntranetSync.Core.Logging;
 using IntranetSync.Core.Sync;
@@ -24,6 +25,7 @@ namespace IntranetSync.Service
 
         protected override void OnStart(string[] args)
         {
+            RuntimeCompat.EnsureModernTls();
             _store = new ConfigStore();
             _log = new SyncLogger(_store.DataDirectory);
             _host = new SyncHost(_store, _log);

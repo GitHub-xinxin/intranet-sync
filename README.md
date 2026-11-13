@@ -1,6 +1,6 @@
 # 内网 SQL → 云同步代理（Intranet Sync Agent）
 
-面向 Windows Server 2012+ / **.NET Framework 4.8** 的无窗口 Windows 服务：增量同步 SQL Server 视图到云端 API，PDF 经内网下载后直传阿里云 OSS，**库与 JSON 只存云端 URL**。
+面向 Windows Server 2012 R2+ / **.NET Framework 4.5.1**（2012 R2 系统自带，无需再装 4.8）的无窗口 Windows 服务：增量同步 SQL Server 视图到云端 API，PDF 经内网下载后直传阿里云 OSS，**库与 JSON 只存云端 URL**。
 
 ## 解决方案结构
 
@@ -32,11 +32,11 @@ intranet-sync-agent/
 
 ## 在 Windows 上构建
 
-> 本仓库可在 Linux 云环境中编辑，但 **必须在 Windows + MSBuild/.NET 4.8** 上编译；**Setup.exe 也须在 Windows 上用 Inno Setup 编译**。
+> 本仓库可在 Linux 云环境中编辑，但 **必须在 Windows + MSBuild/.NET 4.5.1 Targeting Pack** 上编译；**Setup.exe 也须在 Windows 上用 Inno Setup 编译**。
 
 ### 推荐：一键打安装包
 
-1. 安装 Visual Studio 2019/2022（或 Build Tools）+ .NET Framework 4.8 Targeting Pack  
+1. 安装 Visual Studio 2019/2022（或 Build Tools）+ .NET Framework 4.5.1 Targeting Pack  
 2. 安装 [Inno Setup](https://jrsoftware.org/isinfo.php) 5 或 6（Server 2012 友好）  
 3. 管理员不必需；在项目根目录运行：
 
@@ -70,7 +70,7 @@ msbuild IntranetSyncAgent.sln /p:Configuration=Release /p:Platform="Any CPU"
 
 ## 安装（推荐 Setup.exe）
 
-1. 目标机已装 **.NET Framework 4.8**  
+1. 目标机为 **Windows Server 2012 R2+**（自带 **.NET Framework 4.5.1**；安装包**不会**再装 .NET 4.8，也不强制重启）  
 2. 以**管理员**运行 `IntranetSyncAgent-Setup.exe`  
 3. 安装程序将文件放入 Program Files，注册并启动 Windows 服务 `IntranetSyncAgent`，写入卸载项  
 4. 开始菜单：**Open Admin UI**、**Uninstall**；可选桌面快捷方式  

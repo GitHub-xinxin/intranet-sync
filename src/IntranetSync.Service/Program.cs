@@ -1,6 +1,7 @@
 using System;
 using System.ServiceProcess;
 using IntranetSync.Admin;
+using IntranetSync.Core;
 using IntranetSync.Core.Config;
 using IntranetSync.Core.Logging;
 using IntranetSync.Core.Sync;
@@ -14,6 +15,8 @@ namespace IntranetSync.Service
     {
         private static int Main(string[] args)
         {
+            RuntimeCompat.EnsureModernTls();
+
             bool console = false;
             foreach (var a in args)
             {

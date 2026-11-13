@@ -1,9 +1,4 @@
-Place Microsoft .NET Framework 4.8 offline installer here before compiling Setup:
+.NET Framework redistributable is no longer bundled.
 
-  ndp48-x86-x64-allos-enu.exe
-
-Download:
-  https://go.microsoft.com/fwlink/?LinkId=2085155
-
-GitHub Actions downloads this file automatically during Build Installer.
-Do not commit the .exe (see .gitignore).
+This agent targets .NET Framework 4.5.1, which ships with Windows Server 2012 R2.
+Setup only checks for Release >= 378675 and does not install ndp48.
