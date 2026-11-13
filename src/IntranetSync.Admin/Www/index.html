@@ -85,8 +85,11 @@
     </section>
 
     <section>
-      <h2>3. Cloud API / OSS（云端与对象存储）</h2>
-      <p class="hint-block">业务元数据推到云 API；PDF 文件上传到阿里云 OSS。推荐勾选 STS，由云 API 下发临时凭证。</p>
+      <h2>3. 云端 API / OSS（在这里配置云接口）</h2>
+      <p class="hint-block">
+        <strong>云 API</strong>：填写「云 API 根地址 + 服务令牌」，视图行数据会 POST 到这里的 <code>/sync/batch</code>。<br />
+        <strong>OSS</strong>：PDF 文件上传到对象存储；推荐勾选 STS，由云 API 的 <code>/sync/oss-token</code> 下发临时凭证。
+      </p>
       <div class="grid">
         <label>
           <span class="lbl">云 API 根地址 <em>API Base URL</em></span>
@@ -141,7 +144,8 @@
     </section>
 
     <section>
-      <h2>4. PDF / 同步运行参数</h2>
+      <h2>4. PDF 下载参数（仅处理附件链接时用到）</h2>
+      <p class="hint-block">只影响内网 PDF 的下载与上传 OSS；与「多久同步一次」无关。</p>
       <div class="grid">
         <label>
           <span class="lbl">单个 PDF 最大 MB</span>
@@ -162,18 +166,28 @@
           </select>
           <span class="hint">下载内网 PDF 链接时使用的认证方式</span>
         </label>
-        <label>
-          <span class="lbl">同步间隔（秒）</span>
-          <input id="sync.intervalSeconds" type="number" min="30" />
-          <span class="hint">定时同步周期，建议 ≥ 60</span>
-        </label>
-        <label class="check">
-          <input id="sync.enabled" type="checkbox" />
-          启用定时同步（Enabled）
-        </label>
         <label class="check">
           <input id="sync.failBatchOnPdfError" type="checkbox" />
           PDF 失败则整批失败（默认关闭，单行失败不阻断）
+        </label>
+      </div>
+    </section>
+
+    <section>
+      <h2>5. 同步调度（整轮：查库 → PDF → 推云 API）</h2>
+      <p class="hint-block">
+        这里控制<strong>整轮业务同步</strong>的频率，不是只同步 PDF。
+        每一轮都会：查询视图 →（如有）处理 PDF → 把行数据推到第 3 节配置的云 API。
+      </p>
+      <div class="grid">
+        <label>
+          <span class="lbl">同步间隔（秒）</span>
+          <input id="sync.intervalSeconds" type="number" min="30" />
+          <span class="hint">每隔多少秒自动跑一整轮；建议 ≥ 60。例：180 = 每 3 分钟</span>
+        </label>
+        <label class="check">
+          <input id="sync.enabled" type="checkbox" />
+          启用定时同步（勾选后按间隔自动跑）
         </label>
       </div>
       <div class="actions">
@@ -186,7 +200,7 @@
     </section>
 
     <section>
-      <h2>5. 最近日志 / 失败记录</h2>
+      <h2>6. 最近日志 / 失败记录</h2>
       <div class="split">
         <div>
           <h3>运行日志 Logs</h3>
