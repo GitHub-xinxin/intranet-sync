@@ -68,18 +68,18 @@
           <span class="hint">完整视图名，如 dbo.OrderListView（可带 schema）</span>
         </label>
         <label>
-          <span class="lbl">主键列 <em>PK column</em></span>
-          <input id="view.primaryKeyColumn" placeholder="Id" />
-          <span class="hint">唯一标识一行的列，云端按此 upsert</span>
+          <span class="lbl">唯一标识列 <em>业务主键</em></span>
+          <input id="view.primaryKeyColumn" placeholder="person_id" />
+          <span class="hint">不必是数据库主键约束；填视图里能唯一区分一行的列即可（如 person_id），云端按此更新/插入。不可留空</span>
         </label>
         <label>
           <span class="lbl">增量列 <em>Incremental column</em></span>
-          <input id="view.incrementalColumn" placeholder="UpdatedAt（留空则用行哈希）" />
-          <span class="hint">如 UpdatedAt / ModifyTime；只同步大于上次水位的行。留空则按整行内容哈希比对变化</span>
+          <input id="view.incrementalColumn" placeholder="updated_at（留空则用行哈希）" />
+          <span class="hint">如 updated_at；只同步大于上次水位的行。留空则按整行内容哈希比对变化</span>
         </label>
         <label>
           <span class="lbl">PDF 链接列 <em>PDF URL columns</em></span>
-          <input id="view.pdfUrlColumns" placeholder="PdfUrl,AttachUrl" />
+          <input id="view.pdfUrlColumns" placeholder="PDF" />
           <span class="hint">视图里存内网 PDF 地址的列名，多个用英文逗号分隔；无 PDF 可留空</span>
         </label>
         <label>
@@ -93,14 +93,13 @@
     <section>
       <h2>3. 云端 API（行数据 POST 同步）</h2>
       <p class="hint-block">
-        填写<strong>完整的 POST 接口地址</strong>，程序会直接对该地址发起请求，<strong>不会再自动拼接</strong> <code>/sync/batch</code>。
-        例：<code>https://api.example.com/sync/batch</code> 或你们自己的业务 upsert 地址。
+        填写完整的 POST 接口地址，程序会直接对该地址发起请求。
       </p>
       <div class="grid">
         <label>
           <span class="lbl">数据同步接口地址 <em>POST URL</em></span>
           <input id="cloud.apiBaseUrl" placeholder="https://api.example.com/sync/batch" />
-          <span class="hint">完整 URL；联调 stub 填 http://127.0.0.1:3900/sync/batch</span>
+          <span class="hint">完整 POST URL，例如 https://api.example.com/your/upsert</span>
         </label>
         <label>
           <span class="lbl">服务令牌 <em>Service Token</em></span>
