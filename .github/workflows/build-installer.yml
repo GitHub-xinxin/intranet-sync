@@ -64,6 +64,31 @@ jobs:
             exit /b 1
           )
 
+      - name: Download .NET Framework 4.8 offline redist
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path installer\redist | Out-Null
+          $out = Join-Path $PWD "installer\redist\ndp48-x86-x64-allos-enu.exe"
+          $urls = @(
+            "https://go.microsoft.com/fwlink/?LinkId=2085155",
+            "https://download.visualstudio.microsoft.com/download/pr/2d6bb6b2-226a-4baa-bdec-798822606ff1/8494001c276a4b96804cde7829c04d7f/ndp48-x86-x64-allos-enu.exe"
+          )
+          $ok = $false
+          foreach ($url in $urls) {
+            try {
+              Write-Host "Downloading .NET 4.8 from $url"
+              Invoke-WebRequest -Uri $url -OutFile $out -UseBasicParsing
+              if ((Test-Path $out) -and ((Get-Item $out).Length -gt 50MB)) {
+                $ok = $true
+                break
+              }
+            } catch {
+              Write-Warning $_
+            }
+          }
+          if (-not $ok) { throw "Failed to download ndp48-x86-x64-allos-enu.exe" }
+          Write-Host ("Redist size bytes=" + (Get-Item $out).Length)
+
       - name: Locate Inno Setup
         shell: pwsh
         run: |
@@ -85,11 +110,15 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path dist | Out-Null
+          if (-not (Test-Path "installer\redist\ndp48-x86-x64-allos-enu.exe")) {
+            throw "Missing installer\redist\ndp48-x86-x64-allos-enu.exe"
+          }
           & "$env:ISCC" "installer\IntranetSyncAgent.iss"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           if (-not (Test-Path "dist\IntranetSyncAgent-Setup.exe")) {
             throw "Expected dist\IntranetSyncAgent-Setup.exe"
           }
+          Write-Host ("Setup size bytes=" + (Get-Item "dist\IntranetSyncAgent-Setup.exe").Length)
 
       - name: Upload Setup.exe
         uses: actions/upload-artifact@v4

@@ -9,3 +9,5 @@ dist/
 nuget.exe
 .DS_Store
 **/.DS_Store
+# Large Microsoft redist; CI downloads it
+installer/redist/*.exe
