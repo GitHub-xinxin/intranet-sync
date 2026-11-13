@@ -71,7 +71,15 @@ namespace IntranetSync.Core.Config
 
     public sealed class CloudSettings
     {
-        public string ApiBaseUrl { get; set; } = "https://api.example.com";
+        /// <summary>
+        /// 数据同步完整 POST 地址（不再自动拼接 /sync/batch）。
+        /// 例：https://api.example.com/sync/batch
+        /// </summary>
+        public string ApiBaseUrl { get; set; } = "https://api.example.com/sync/batch";
+        /// <summary>
+        /// STS 临时凭证完整 GET 地址（可选）。留空则尝试从 ApiBaseUrl 推导 /sync/oss-token。
+        /// </summary>
+        public string OssTokenUrl { get; set; } = "";
         /// <summary>服务 Token；落盘加密，日志打码。</summary>
         public string ServiceToken { get; set; } = "";
         public string TenantId { get; set; } = "default";

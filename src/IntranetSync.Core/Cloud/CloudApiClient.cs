@@ -12,6 +12,7 @@ namespace IntranetSync.Core.Cloud
 {
     /// <summary>
     /// HTTPS client for cloud sync API. Never logs Authorization header or tokens.
+    /// Batch upsert posts to CloudSettings.ApiBaseUrl as a full URL (no path append).
     /// </summary>
     public sealed class CloudApiClient : IDisposable
     {
@@ -49,9 +50,9 @@ namespace IntranetSync.Core.Cloud
 
         public async Task<SyncBatchResponse> PostBatchAsync(SyncBatchRequest request, CancellationToken ct)
         {
-            string url = Combine(_settings.ApiBaseUrl, "/sync/batch");
+            string url = RequireUrl(_settings.ApiBaseUrl, "Cloud API batch URL");
             string json = JsonConvert.SerializeObject(request);
-            _log.Info("POST /sync/batch rows=" + (request.Rows == null ? 0 : request.Rows.Count));
+            _log.Info("POST batch url=" + url + " rows=" + (request.Rows == null ? 0 : request.Rows.Count));
 
             using (var content = new StringContent(json, Encoding.UTF8, "application/json"))
             using (var resp = await _http.PostAsync(url, content, ct).ConfigureAwait(false))
@@ -69,8 +70,8 @@ namespace IntranetSync.Core.Cloud
 
         public async Task<OssTokenResponse> GetOssTokenAsync(CancellationToken ct)
         {
-            string url = Combine(_settings.ApiBaseUrl, "/sync/oss-token");
-            _log.Info("GET /sync/oss-token");
+            string url = ResolveOssTokenUrl();
+            _log.Info("GET oss-token url=" + url);
             using (var resp = await _http.GetAsync(url, ct).ConfigureAwait(false))
             {
                 string body = await resp.Content.ReadAsStringAsync().ConfigureAwait(false);
@@ -86,7 +87,8 @@ namespace IntranetSync.Core.Cloud
 
         public async Task<PdfLookupResponse> LookupPdfAsync(string sha256, CancellationToken ct)
         {
-            string url = Combine(_settings.ApiBaseUrl, "/sync/pdf/" + Uri.EscapeDataString(sha256));
+            string root = ResolveApiRoot();
+            string url = Combine(root, "/sync/pdf/" + Uri.EscapeDataString(sha256));
             using (var resp = await _http.GetAsync(url, ct).ConfigureAwait(false))
             {
                 if (resp.StatusCode == System.Net.HttpStatusCode.NotFound)
@@ -104,7 +106,8 @@ namespace IntranetSync.Core.Cloud
 
         public async Task RegisterPdfAsync(string sha256, string ossKey, string url, CancellationToken ct)
         {
-            string endpoint = Combine(_settings.ApiBaseUrl, "/sync/pdf/complete");
+            string root = ResolveApiRoot();
+            string endpoint = Combine(root, "/sync/pdf/complete");
             var payload = new { sha256 = sha256, ossKey = ossKey, url = url, tenantId = _settings.TenantId };
             using (var content = new StringContent(JsonConvert.SerializeObject(payload), Encoding.UTF8, "application/json"))
             using (var resp = await _http.PostAsync(endpoint, content, ct).ConfigureAwait(false))
@@ -112,6 +115,53 @@ namespace IntranetSync.Core.Cloud
                 if (!resp.IsSuccessStatusCode)
                     _log.Warn("pdf/complete register soft-fail status=" + (int)resp.StatusCode);
             }
+        }
+
+        private string ResolveOssTokenUrl()
+        {
+            if (!string.IsNullOrWhiteSpace(_settings.OssTokenUrl))
+                return _settings.OssTokenUrl.Trim();
+
+            return Combine(ResolveApiRoot(), "/sync/oss-token");
+        }
+
+        /// <summary>
+        /// Derive API root for auxiliary endpoints from batch URL or explicit OSS token URL.
+        /// </summary>
+        private string ResolveApiRoot()
+        {
+            string hint = !string.IsNullOrWhiteSpace(_settings.OssTokenUrl)
+                ? _settings.OssTokenUrl.Trim()
+                : (_settings.ApiBaseUrl ?? "").Trim();
+
+            if (string.IsNullOrEmpty(hint))
+                return "";
+
+            string trimmed = hint.TrimEnd('/');
+            string[] suffixes = { "/sync/batch", "/sync/oss-token", "/sync/pdf/complete" };
+            foreach (var suffix in suffixes)
+            {
+                if (trimmed.EndsWith(suffix, StringComparison.OrdinalIgnoreCase))
+                    return trimmed.Substring(0, trimmed.Length - suffix.Length);
+            }
+
+            try
+            {
+                var uri = new Uri(trimmed);
+                // Fall back to origin when custom batch path is used
+                return uri.GetLeftPart(UriPartial.Authority);
+            }
+            catch
+            {
+                return trimmed;
+            }
+        }
+
+        private static string RequireUrl(string url, string name)
+        {
+            if (string.IsNullOrWhiteSpace(url))
+                throw new InvalidOperationException(name + " is not configured");
+            return url.Trim();
         }
 
         private static string Combine(string baseUrl, string path)

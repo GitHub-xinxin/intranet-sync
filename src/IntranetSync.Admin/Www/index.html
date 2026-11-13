@@ -91,31 +91,49 @@
     </section>
 
     <section>
-      <h2>3. 云端 API / OSS（在这里配置云接口）</h2>
+      <h2>3. 云端 API（行数据 POST 同步）</h2>
       <p class="hint-block">
-        <strong>云 API</strong>：填写「云 API 根地址 + 服务令牌」，视图行数据会 POST 到这里的 <code>/sync/batch</code>。<br />
-        <strong>OSS</strong>：PDF 文件上传到对象存储；推荐勾选 STS，由云 API 的 <code>/sync/oss-token</code> 下发临时凭证。
+        填写<strong>完整的 POST 接口地址</strong>，程序会直接对该地址发起请求，<strong>不会再自动拼接</strong> <code>/sync/batch</code>。
+        例：<code>https://api.example.com/sync/batch</code> 或你们自己的业务 upsert 地址。
       </p>
       <div class="grid">
         <label>
-          <span class="lbl">云 API 根地址 <em>API Base URL</em></span>
-          <input id="cloud.apiBaseUrl" placeholder="https://api.example.com" />
-          <span class="hint">不含具体路径；联调 stub 可填 http://127.0.0.1:3900</span>
+          <span class="lbl">数据同步接口地址 <em>POST URL</em></span>
+          <input id="cloud.apiBaseUrl" placeholder="https://api.example.com/sync/batch" />
+          <span class="hint">完整 URL；联调 stub 填 http://127.0.0.1:3900/sync/batch</span>
         </label>
         <label>
           <span class="lbl">服务令牌 <em>Service Token</em></span>
           <input id="cloud.serviceToken" type="password" />
-          <span class="hint">调用云同步接口的鉴权 Token，勿写入小程序</span>
+          <span class="hint">Authorization: Bearer …；勿写入小程序</span>
         </label>
         <label>
           <span class="lbl">租户 ID <em>Tenant Id</em></span>
           <input id="cloud.tenantId" />
-          <span class="hint">多租户隔离标识，也会用在 OSS 对象路径中</span>
+          <span class="hint">多租户隔离标识，也会用于 OSS 对象路径</span>
+        </label>
+      </div>
+    </section>
+
+    <section>
+      <h2>4. OSS（PDF 对象存储，与云 API 分开配置）</h2>
+      <p class="hint-block">
+        仅处理 PDF 文件上传。推荐 STS：填写下方「STS 接口地址」，或留空由程序根据第 3 节地址尝试推导。
+      </p>
+      <div class="grid">
+        <label class="check">
+          <input id="oss.useSts" type="checkbox" checked />
+          使用 STS 临时凭证（推荐）
+        </label>
+        <label>
+          <span class="lbl">STS 接口地址 <em>GET URL</em></span>
+          <input id="cloud.ossTokenUrl" placeholder="https://api.example.com/sync/oss-token" />
+          <span class="hint">完整 GET 地址；留空则尝试从第 3 节地址推导 /sync/oss-token</span>
         </label>
         <label>
           <span class="lbl">OSS 地域节点 <em>Endpoint</em></span>
           <input id="oss.endpoint" placeholder="oss-cn-hangzhou.aliyuncs.com" />
-          <span class="hint">如 oss-cn-hangzhou.aliyuncs.com；STS 模式下也可由接口返回</span>
+          <span class="hint">如 oss-cn-hangzhou.aliyuncs.com；STS 也可直接返回</span>
         </label>
         <label>
           <span class="lbl">OSS 桶名 <em>Bucket</em></span>
@@ -125,16 +143,12 @@
         <label>
           <span class="lbl">对象前缀 <em>Prefix</em></span>
           <input id="oss.prefix" />
-          <span class="hint">OSS 路径前缀，默认 sync，最终类似 sync/租户/哈希.pdf</span>
-        </label>
-        <label class="check">
-          <input id="oss.useSts" type="checkbox" checked />
-          使用 STS 临时凭证（推荐，调用 GET /sync/oss-token）
+          <span class="hint">默认 sync，最终类似 sync/租户/哈希.pdf</span>
         </label>
         <label>
           <span class="lbl">AccessKey Id</span>
           <input id="oss.accessKeyId" />
-          <span class="hint">仅在未使用 STS 时填写（不推荐长期放在内网机）</span>
+          <span class="hint">仅在未使用 STS 时填写</span>
         </label>
         <label>
           <span class="lbl">AccessKey Secret</span>
@@ -144,13 +158,13 @@
         <label>
           <span class="lbl">公网访问域名 <em>Public Base URL</em></span>
           <input id="oss.publicBaseUrl" placeholder="https://cdn.example.com" />
-          <span class="hint">可选；用于拼最终 PDF HTTPS 地址（CDN/自定义域名）</span>
+          <span class="hint">可选；用于拼最终 PDF HTTPS 地址</span>
         </label>
       </div>
     </section>
 
     <section>
-      <h2>4. PDF 下载参数（仅处理附件链接时用到）</h2>
+      <h2>5. PDF 下载参数（仅处理附件链接时用到）</h2>
       <p class="hint-block">只影响内网 PDF 的下载与上传 OSS；与「多久同步一次」无关。</p>
       <div class="grid">
         <label>
@@ -180,7 +194,7 @@
     </section>
 
     <section>
-      <h2>5. 同步调度（整轮：查库 → PDF → 推云 API）</h2>
+      <h2>6. 同步调度（整轮：查库 → PDF → 推云 API）</h2>
       <p class="hint-block">
         这里控制<strong>整轮业务同步</strong>的频率，不是只同步 PDF。
         每一轮都会：查询视图 →（如有）处理 PDF → 把行数据推到第 3 节配置的云 API。
@@ -206,7 +220,7 @@
     </section>
 
     <section>
-      <h2>6. 最近日志 / 失败记录</h2>
+      <h2>7. 最近日志 / 失败记录</h2>
       <div class="split">
         <div>
           <h3>运行日志 Logs</h3>

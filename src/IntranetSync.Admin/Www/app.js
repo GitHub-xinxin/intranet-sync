@@ -30,6 +30,7 @@
     setVal("view.pageSize", cfg.view && cfg.view.pageSize);
 
     setVal("cloud.apiBaseUrl", cfg.cloud && cfg.cloud.apiBaseUrl);
+    setVal("cloud.ossTokenUrl", cfg.cloud && cfg.cloud.ossTokenUrl);
     setVal("cloud.serviceToken", "");
     setVal("cloud.tenantId", cfg.cloud && cfg.cloud.tenantId);
 
@@ -70,6 +71,7 @@
       },
       cloud: {
         apiBaseUrl: getVal("cloud.apiBaseUrl"),
+        ossTokenUrl: getVal("cloud.ossTokenUrl"),
         serviceToken: getVal("cloud.serviceToken") || "********",
         tenantId: getVal("cloud.tenantId")
       },
