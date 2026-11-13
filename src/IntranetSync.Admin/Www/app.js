@@ -30,10 +30,7 @@
     var inc = (cfg.view && cfg.view.incrementalColumn) || "updated_at";
     if (inc === "UpdatedAt") inc = "updated_at";
     setVal("view.incrementalColumn", inc);
-    var pdfCols = (cfg.view && cfg.view.pdfUrlColumns) || [];
-    if (!pdfCols.length || (pdfCols.length === 2 && pdfCols[0] === "PdfUrl" && pdfCols[1] === "AttachUrl"))
-      pdfCols = ["PDF"];
-    setVal("view.pdfUrlColumns", pdfCols.join(","));
+    setVal("view.pdfUrlColumns", normalizePdfColumns(cfg.view && cfg.view.pdfUrlColumns).join(","));
     setVal("view.pageSize", cfg.view && cfg.view.pageSize);
 
     setVal("cloud.apiBaseUrl", cfg.cloud && cfg.cloud.apiBaseUrl);
@@ -58,8 +55,29 @@
     setVal("sync.failBatchOnPdfError", cfg.sync && cfg.sync.failBatchOnPdfError);
   }
 
+  function normalizePdfColumns(cols) {
+    var list = [];
+    if (typeof cols === "string")
+      list = cols.split(",");
+    else if (Object.prototype.toString.call(cols) === "[object Array]")
+      list = cols.slice();
+    var out = [];
+    var seen = {};
+    for (var i = 0; i < list.length; i++) {
+      var name = (list[i] == null ? "" : String(list[i])).trim();
+      if (!name) continue;
+      var key = name.toLowerCase();
+      if (seen[key]) continue;
+      seen[key] = true;
+      out.push(name);
+    }
+    if (!out.length || (out.length === 2 && out[0] === "PdfUrl" && out[1] === "AttachUrl"))
+      return ["PDF"];
+    return out;
+  }
+
   function collect() {
-    var pdfCols = (getVal("view.pdfUrlColumns") || "").split(",").map(function (s) { return s.trim(); }).filter(Boolean);
+    var pdfCols = normalizePdfColumns(getVal("view.pdfUrlColumns") || "");
     var maxMb = getVal("pdf.maxMb") || 50;
     return {
       sql: {

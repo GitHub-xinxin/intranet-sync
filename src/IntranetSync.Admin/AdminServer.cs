@@ -35,7 +35,9 @@ namespace IntranetSync.Admin
             _jsonSettings = new JsonSerializerSettings
             {
                 ContractResolver = new CamelCasePropertyNamesContractResolver(),
-                NullValueHandling = NullValueHandling.Ignore
+                NullValueHandling = NullValueHandling.Ignore,
+                // Avoid appending into pre-initialized List<> defaults (e.g. PdfUrlColumns).
+                ObjectCreationHandling = ObjectCreationHandling.Replace
             };
         }
 
@@ -122,7 +124,10 @@ namespace IntranetSync.Admin
 
                 if (path == "/api/config" && ctx.Request.HttpMethod == "GET")
                 {
-                    var dto = SyncConfigDto.FromConfig(_store.LoadOrDefault());
+                    var cfg = _store.LoadOrDefault();
+                    if (NormalizeViewColumns(cfg))
+                        _store.Save(cfg);
+                    var dto = SyncConfigDto.FromConfig(cfg);
                     await WriteJsonAsync(ctx, 200, dto).ConfigureAwait(false);
                     return;
                 }
@@ -135,6 +140,7 @@ namespace IntranetSync.Admin
                     // Normalize camelCase → SyncConfig via serializer
                     var incoming = JsonConvert.DeserializeObject<SyncConfig>(body, _jsonSettings) ?? new SyncConfig();
                     MergeSecrets(existing, incoming);
+                    NormalizeViewColumns(incoming);
                     _store.Save(incoming);
                     _log.Info("Config saved (secrets encrypted at rest)");
                     await WriteJsonAsync(ctx, 200, SyncConfigDto.FromConfig(incoming)).ConfigureAwait(false);
@@ -238,6 +244,68 @@ namespace IntranetSync.Admin
             if (IsPlaceholder(incoming.Oss.SecurityToken)) incoming.Oss.SecurityToken = existing.Oss.SecurityToken;
             if (IsPlaceholder(incoming.Pdf.BasicPassword)) incoming.Pdf.BasicPassword = existing.Pdf.BasicPassword;
             if (IsPlaceholder(incoming.Admin.AdminPassword)) incoming.Admin.AdminPassword = existing.Admin.AdminPassword;
+        }
+
+        /// <summary>
+        /// Deduplicate PDF column names and migrate old stock defaults. Returns true if changed.
+        /// </summary>
+        private static bool NormalizeViewColumns(SyncConfig cfg)
+        {
+            if (cfg == null || cfg.View == null) return false;
+            bool changed = false;
+
+            if (string.Equals(cfg.View.PrimaryKeyColumn, "Id", StringComparison.Ordinal))
+            {
+                cfg.View.PrimaryKeyColumn = "";
+                changed = true;
+            }
+            if (string.Equals(cfg.View.IncrementalColumn, "UpdatedAt", StringComparison.Ordinal))
+            {
+                cfg.View.IncrementalColumn = "updated_at";
+                changed = true;
+            }
+
+            if (cfg.View.PdfUrlColumns == null)
+            {
+                cfg.View.PdfUrlColumns = new System.Collections.Generic.List<string> { "PDF" };
+                return true;
+            }
+
+            var dedup = new System.Collections.Generic.List<string>();
+            var seen = new System.Collections.Generic.HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var col in cfg.View.PdfUrlColumns)
+            {
+                if (string.IsNullOrWhiteSpace(col)) continue;
+                string name = col.Trim();
+                if (!seen.Add(name))
+                {
+                    changed = true;
+                    continue;
+                }
+                dedup.Add(name);
+            }
+
+            if (dedup.Count == 2 &&
+                string.Equals(dedup[0], "PdfUrl", StringComparison.OrdinalIgnoreCase) &&
+                string.Equals(dedup[1], "AttachUrl", StringComparison.OrdinalIgnoreCase))
+            {
+                dedup = new System.Collections.Generic.List<string> { "PDF" };
+                changed = true;
+            }
+
+            if (dedup.Count == 0)
+            {
+                dedup.Add("PDF");
+                changed = true;
+            }
+
+            if (changed || dedup.Count != cfg.View.PdfUrlColumns.Count)
+            {
+                cfg.View.PdfUrlColumns = dedup;
+                changed = true;
+            }
+
+            return changed;
         }
 
         private static bool IsPlaceholder(string v)
