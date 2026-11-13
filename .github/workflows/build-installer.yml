@@ -46,6 +46,10 @@ jobs:
             echo ERROR: Newtonsoft.Json.dll missing after restore
             exit /b 1
           )
+          if not exist "packages\Microsoft.NETFramework.ReferenceAssemblies.net451.1.0.3\build\Microsoft.NETFramework.ReferenceAssemblies.net451.targets" (
+            echo ERROR: .NET 4.5.1 reference assemblies package missing after restore
+            exit /b 1
+          )
 
       - name: Build Release
         run: >
