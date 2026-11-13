@@ -24,9 +24,16 @@
     setVal("sql.integratedSecurity", cfg.sql && cfg.sql.integratedSecurity);
 
     setVal("view.viewName", cfg.view && cfg.view.viewName);
-    setVal("view.primaryKeyColumn", cfg.view && cfg.view.primaryKeyColumn);
-    setVal("view.incrementalColumn", cfg.view && cfg.view.incrementalColumn);
-    setVal("view.pdfUrlColumns", (cfg.view && cfg.view.pdfUrlColumns || []).join(","));
+    var pk = (cfg.view && cfg.view.primaryKeyColumn) || "";
+    if (pk === "Id") pk = "";
+    setVal("view.primaryKeyColumn", pk);
+    var inc = (cfg.view && cfg.view.incrementalColumn) || "updated_at";
+    if (inc === "UpdatedAt") inc = "updated_at";
+    setVal("view.incrementalColumn", inc);
+    var pdfCols = (cfg.view && cfg.view.pdfUrlColumns) || [];
+    if (!pdfCols.length || (pdfCols.length === 2 && pdfCols[0] === "PdfUrl" && pdfCols[1] === "AttachUrl"))
+      pdfCols = ["PDF"];
+    setVal("view.pdfUrlColumns", pdfCols.join(","));
     setVal("view.pageSize", cfg.view && cfg.view.pageSize);
 
     setVal("cloud.apiBaseUrl", cfg.cloud && cfg.cloud.apiBaseUrl);
