@@ -84,28 +84,32 @@ namespace IntranetSync.Core.Sync
                 await conn.OpenAsync(ct).ConfigureAwait(false);
                 using (var cmd = new SqlCommand(sqlText, conn))
                 {
-                    object wmValue = string.IsNullOrEmpty(watermark) ? (object)DBNull.Value : watermark;
+                    object wmValue;
                     // For typed comparisons, try parse datetime / long
                     if (!string.IsNullOrEmpty(watermark))
                     {
                         DateTime dt;
                         long lng;
-                        if (DateTime.TryParse(watermark, out dt))
+                        if (TryParseWatermarkDate(watermark, out dt))
                             wmValue = dt;
                         else if (long.TryParse(watermark, out lng))
                             wmValue = lng;
+                        else
+                            wmValue = watermark;
                     }
                     else if (useIncremental)
                     {
-                        // empty watermark → use minimum
-                        wmValue = DateTime.MinValue;
+                        // empty watermark → floor below any SQL DATETIME / DATETIME2 value.
+                        // Do NOT use DateTime.MinValue: SqlParameter defaults to SqlDbType.DateTime
+                        // which rejects < 1753-01-01 ("SqlDateTime overflow").
+                        wmValue = SqlDateTimeFloor;
                     }
                     else
                     {
                         wmValue = "";
                     }
 
-                    cmd.Parameters.Add(new SqlParameter("@wm", wmValue ?? DBNull.Value));
+                    AddWatermarkParameter(cmd, wmValue);
                     _log.Debug("SQL page query view=" + view.ViewName + " wm=" + (watermark ?? ""));
 
                     using (var reader = await cmd.ExecuteReaderAsync(CommandBehavior.SequentialAccess, ct).ConfigureAwait(false))
@@ -127,7 +131,7 @@ namespace IntranetSync.Core.Sync
                                     pk = val == null ? null : Convert.ToString(val);
                                 if (useIncremental &&
                                     string.Equals(name, view.IncrementalColumn, StringComparison.OrdinalIgnoreCase))
-                                    wm = val == null ? null : Convert.ToString(val);
+                                    wm = FormatWatermarkValue(val);
                             }
 
                             if (!useIncremental)
@@ -146,6 +150,55 @@ namespace IntranetSync.Core.Sync
             }
 
             return rows;
+        }
+
+        /// <summary>
+        /// SQL Server DATETIME lower bound (also safe for DATETIME2 comparisons).
+        /// </summary>
+        private static readonly DateTime SqlDateTimeFloor = new DateTime(1753, 1, 1, 0, 0, 0, DateTimeKind.Unspecified);
+
+        private static void AddWatermarkParameter(SqlCommand cmd, object wmValue)
+        {
+            if (wmValue is DateTime)
+            {
+                // Explicit DateTime2 avoids SqlDbType.DateTime range validation on the client.
+                var p = new SqlParameter("@wm", SqlDbType.DateTime2)
+                {
+                    Value = ClampToSqlDateTimeRange((DateTime)wmValue)
+                };
+                cmd.Parameters.Add(p);
+                return;
+            }
+
+            cmd.Parameters.Add(new SqlParameter("@wm", wmValue ?? (object)DBNull.Value));
+        }
+
+        private static bool TryParseWatermarkDate(string watermark, out DateTime dt)
+        {
+            if (DateTime.TryParse(
+                    watermark,
+                    System.Globalization.CultureInfo.InvariantCulture,
+                    System.Globalization.DateTimeStyles.RoundtripKind,
+                    out dt))
+                return true;
+
+            return DateTime.TryParse(watermark, out dt);
+        }
+
+        private static DateTime ClampToSqlDateTimeRange(DateTime dt)
+        {
+            // Keep values usable against both DATETIME and DATETIME2 columns.
+            return dt < SqlDateTimeFloor ? SqlDateTimeFloor : dt;
+        }
+
+        private static string FormatWatermarkValue(object val)
+        {
+            if (val == null) return null;
+            if (val is DateTime)
+                return ((DateTime)val).ToString("o", System.Globalization.CultureInfo.InvariantCulture);
+            if (val is DateTimeOffset)
+                return ((DateTimeOffset)val).ToString("o", System.Globalization.CultureInfo.InvariantCulture);
+            return Convert.ToString(val, System.Globalization.CultureInfo.InvariantCulture);
         }
 
         private static string Bracket(string ident)
