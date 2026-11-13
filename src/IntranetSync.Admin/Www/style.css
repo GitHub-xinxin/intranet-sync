@@ -73,6 +73,7 @@ h1 { margin: 0; font-size: 1.4rem; letter-spacing: 0.02em; }
   font-size: 0.8rem;
 }
 button.danger { background: #6b2b2b; border-color: #a34545; }
+button.small { margin: 0; padding: 0.28rem 0.55rem; font-size: 0.78rem; }
 button.is-hidden { display: none !important; }
 main {
   padding: 1rem 1.5rem 3rem;
@@ -80,6 +81,7 @@ main {
   margin: 0 auto;
   width: 100%;
   box-sizing: border-box;
+  overflow-x: hidden;
 }
 section {
   background: var(--panel);
@@ -87,6 +89,9 @@ section {
   border-radius: 10px;
   padding: 1rem 1.1rem 1.2rem;
   margin: 1rem 0;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
 }
 h2 { margin: 0 0 0.5rem; font-size: 1.05rem; }
 h3 { margin: 0 0 0.5rem; font-size: 0.95rem; color: var(--muted); }
@@ -131,10 +136,28 @@ button:hover { filter: brightness(1.08); }
   font-size: 0.78rem;
   overflow: auto;
   max-height: 180px;
+  max-width: 100%;
   white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 .out.tall { max-height: 320px; min-height: 180px; }
-.split { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+.split {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem;
+  min-width: 0;
+  max-width: 100%;
+}
+.log-panel { min-width: 0; max-width: 100%; overflow: hidden; }
+.panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+.panel-head h3 { margin: 0; }
 @media (max-width: 800px) {
   .split { grid-template-columns: 1fr; }
   .top { flex-direction: column; }

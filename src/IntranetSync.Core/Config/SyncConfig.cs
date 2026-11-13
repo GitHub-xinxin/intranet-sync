@@ -98,8 +98,12 @@ namespace IntranetSync.Core.Config
         public string AccessKeyId { get; set; } = "";
         public string AccessKeySecret { get; set; } = "";
         public string SecurityToken { get; set; } = "";
-        /// <summary>公网访问域名（可选），用于拼 cloud URL。</summary>
+        /// <summary>公网访问域名（可选）；UseSignedUrl=false 时用于拼 cloud URL。</summary>
         public string PublicBaseUrl { get; set; } = "";
+        /// <summary>true = 上传后签发私有桶 GET 预签名临时 URL（推荐私有 Bucket）。</summary>
+        public bool UseSignedUrl { get; set; } = true;
+        /// <summary>预签名 URL 有效秒数（默认 24h）。使用 STS 时不会超过 STS 过期时间。</summary>
+        public int SignedUrlExpireSeconds { get; set; } = 86400;
     }
 
     public sealed class SyncRuntimeSettings

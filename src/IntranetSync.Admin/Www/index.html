@@ -157,7 +157,16 @@
         <label>
           <span class="lbl">公网访问域名 <em>Public Base URL</em></span>
           <input id="oss.publicBaseUrl" placeholder="https://cdn.example.com" />
-          <span class="hint">可选；用于拼最终 PDF HTTPS 地址</span>
+          <span class="hint">可选；关闭「预签名临时链接」时用于拼最终 PDF 地址</span>
+        </label>
+        <label class="check">
+          <input id="oss.useSignedUrl" type="checkbox" checked />
+          生成私有桶预签名临时链接（推荐）
+        </label>
+        <label>
+          <span class="lbl">临时链接有效秒数 <em>SignedUrlExpireSeconds</em></span>
+          <input id="oss.signedUrlExpireSeconds" type="number" min="60" max="604800" placeholder="86400" />
+          <span class="hint">默认 86400（24 小时），最长 7 天；使用 STS 时不会超过 STS 凭证寿命</span>
         </label>
       </div>
     </section>
@@ -220,13 +229,20 @@
 
     <section>
       <h2>7. 最近日志 / 失败记录</h2>
+      <p class="hint-block">时间均为北京时间（UTC+8）。长 URL 会自动换行，避免撑破布局。</p>
       <div class="split">
-        <div>
-          <h3>运行日志 Logs</h3>
+        <div class="log-panel">
+          <div class="panel-head">
+            <h3>运行日志 Logs</h3>
+            <button type="button" id="btnClearLogs" class="danger small">清除日志</button>
+          </div>
           <pre id="logs" class="out tall"></pre>
         </div>
-        <div>
-          <h3>PDF 失败队列 Failures</h3>
+        <div class="log-panel">
+          <div class="panel-head">
+            <h3>PDF 失败队列 Failures</h3>
+            <button type="button" id="btnClearFailures" class="danger small">清除失败记录</button>
+          </div>
           <pre id="failures" class="out tall"></pre>
         </div>
       </div>

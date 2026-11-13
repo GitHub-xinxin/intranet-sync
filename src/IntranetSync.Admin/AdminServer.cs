@@ -204,9 +204,23 @@ namespace IntranetSync.Admin
                     return;
                 }
 
+                if (path == "/api/logs/clear" && ctx.Request.HttpMethod == "POST")
+                {
+                    _log.Clear();
+                    await WriteJsonAsync(ctx, 200, new { ok = true, message = "logs cleared" }).ConfigureAwait(false);
+                    return;
+                }
+
                 if (path == "/api/failures" && ctx.Request.HttpMethod == "GET")
                 {
                     await WriteJsonAsync(ctx, 200, _host.Engine.Failures.ListRecent(200)).ConfigureAwait(false);
+                    return;
+                }
+
+                if (path == "/api/failures/clear" && ctx.Request.HttpMethod == "POST")
+                {
+                    _host.Engine.Failures.Clear();
+                    await WriteJsonAsync(ctx, 200, new { ok = true, message = "failures cleared" }).ConfigureAwait(false);
                     return;
                 }
 

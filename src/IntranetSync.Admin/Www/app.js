@@ -45,6 +45,8 @@
     setVal("oss.accessKeyId", cfg.oss && cfg.oss.accessKeyId);
     setVal("oss.accessKeySecret", "");
     setVal("oss.publicBaseUrl", cfg.oss && cfg.oss.publicBaseUrl);
+    setVal("oss.useSignedUrl", !cfg.oss || cfg.oss.useSignedUrl !== false);
+    setVal("oss.signedUrlExpireSeconds", (cfg.oss && cfg.oss.signedUrlExpireSeconds) || 86400);
 
     var maxMb = cfg.pdf && cfg.pdf.maxBytes ? Math.round(cfg.pdf.maxBytes / (1024 * 1024)) : 50;
     setVal("pdf.maxMb", maxMb);
@@ -107,7 +109,9 @@
         useSts: getVal("oss.useSts"),
         accessKeyId: getVal("oss.accessKeyId"),
         accessKeySecret: getVal("oss.accessKeySecret") || "********",
-        publicBaseUrl: getVal("oss.publicBaseUrl")
+        publicBaseUrl: getVal("oss.publicBaseUrl"),
+        useSignedUrl: getVal("oss.useSignedUrl"),
+        signedUrlExpireSeconds: getVal("oss.signedUrlExpireSeconds") || 86400
       },
       pdf: {
         maxBytes: maxMb * 1024 * 1024,
@@ -151,6 +155,36 @@
     }
   }
 
+  /** Display UTC / ISO timestamps as Beijing time (UTC+8). */
+  function toBeijing(value) {
+    if (value == null || value === "") return "-";
+    var d = value instanceof Date ? value : new Date(value);
+    if (isNaN(d.getTime())) return String(value);
+    var bj = new Date(d.getTime() + 8 * 60 * 60 * 1000);
+    function pad(n) { return n < 10 ? "0" + n : String(n); }
+    return bj.getUTCFullYear() + "-" +
+      pad(bj.getUTCMonth() + 1) + "-" +
+      pad(bj.getUTCDate()) + " " +
+      pad(bj.getUTCHours()) + ":" +
+      pad(bj.getUTCMinutes()) + ":" +
+      pad(bj.getUTCSeconds());
+  }
+
+  function formatFailures(list) {
+    return (list || []).map(function (item) {
+      var copy = {};
+      for (var k in item) {
+        if (!Object.prototype.hasOwnProperty.call(item, k)) continue;
+        if (k === "failedAtUtc") {
+          copy.failedAt = toBeijing(item[k]);
+          continue;
+        }
+        copy[k] = item[k];
+      }
+      return copy;
+    });
+  }
+
   function refreshStatus() {
     return api("/api/status").then(function (s) {
       var running = !!s.running;
@@ -167,7 +201,7 @@
       if (body) {
         body.textContent =
           "定时启用: " + (s.enabled ? "是" : "否") +
-          "\n上次运行: " + (s.lastRunUtc || "-") +
+          "\n上次运行: " + toBeijing(s.lastRunUtc) +
           "\n水位: " + ((s.watermark && s.watermark.lastWatermark) || "-") +
           "\n" + ((s.lastResult && s.lastResult.message) || "");
       }
@@ -189,9 +223,9 @@
       api("/api/failures")
     ]).then(function (pair) {
       $("logs").textContent = (pair[0] || []).map(function (l) {
-        return l.utc + " [" + l.level + "] " + l.message;
+        return toBeijing(l.utc) + " [" + l.level + "] " + l.message;
       }).join("\n");
-      $("failures").textContent = JSON.stringify(pair[1] || [], null, 2);
+      $("failures").textContent = JSON.stringify(formatFailures(pair[1] || []), null, 2);
     });
   }
 
@@ -227,6 +261,20 @@
       show("actionResult", "running…");
       api("/api/sync/run", "POST", {})
         .then(function (r) { show("actionResult", r); return Promise.all([refreshStatus(), refreshLogs()]); })
+        .catch(function (e) { show("actionResult", e.message); });
+    };
+
+    $("btnClearLogs").onclick = function () {
+      if (!window.confirm("确认清除运行日志（内存最近日志 + sync.log）？")) return;
+      api("/api/logs/clear", "POST", {})
+        .then(function (r) { show("actionResult", r); return refreshLogs(); })
+        .catch(function (e) { show("actionResult", e.message); });
+    };
+
+    $("btnClearFailures").onclick = function () {
+      if (!window.confirm("确认清除全部 PDF 失败记录？")) return;
+      api("/api/failures/clear", "POST", {})
+        .then(function (r) { show("actionResult", r); return refreshLogs(); })
         .catch(function (e) { show("actionResult", e.message); });
     };
 

@@ -55,6 +55,7 @@
     <Compile Include="Cloud\CloudModels.cs" />
     <Compile Include="Cloud\CloudApiClient.cs" />
     <Compile Include="Pdf\PdfHashMap.cs" />
+    <Compile Include="Pdf\PdfUrlUtil.cs" />
     <Compile Include="Pdf\PdfDownloader.cs" />
     <Compile Include="Pdf\OssUploader.cs" />
     <Compile Include="Pdf\PdfPipeline.cs" />

@@ -64,6 +64,23 @@ namespace IntranetSync.Core.Logging
             }
         }
 
+        public void Clear()
+        {
+            lock (_gate)
+            {
+                _recent.Clear();
+                try
+                {
+                    if (File.Exists(_logFile))
+                        File.WriteAllText(_logFile, string.Empty);
+                }
+                catch
+                {
+                    // ignore disk errors in logger
+                }
+            }
+        }
+
         private void Write(LogLevel level, string message)
         {
             string safe = Mask(message ?? "");
