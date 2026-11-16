@@ -15,6 +15,8 @@ namespace IntranetSync.Core.Sync
         public string LastRowHashModeCursor { get; set; }
         /// <summary>历史缺口已按全表补齐过。之后每轮只从水位增量查询。</summary>
         public bool FullReconcileCompleted { get; set; }
+        /// <summary>上次全表补齐完成时间（UTC）。到期后会再扫一遍，补上后放入视图的历史行。</summary>
+        public DateTime? LastFullReconcileAt { get; set; }
     }
 
     /// <summary>
@@ -58,6 +60,7 @@ namespace IntranetSync.Core.Sync
                     LastPrimaryKey = lastPrimaryKey ?? (prev != null ? prev.LastPrimaryKey : "") ?? "",
                     LastRowHashModeCursor = prev != null ? prev.LastRowHashModeCursor : null,
                     FullReconcileCompleted = prev != null && prev.FullReconcileCompleted,
+                    LastFullReconcileAt = prev != null ? prev.LastFullReconcileAt : null,
                     LastSuccessAt = DateTime.UtcNow
                 };
                 Persist();
@@ -75,6 +78,7 @@ namespace IntranetSync.Core.Sync
                 }
 
                 prev.FullReconcileCompleted = true;
+                prev.LastFullReconcileAt = DateTime.UtcNow;
                 prev.LastSuccessAt = DateTime.UtcNow;
                 _map[viewName] = prev;
                 Persist();

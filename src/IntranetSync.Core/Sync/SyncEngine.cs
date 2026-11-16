@@ -178,8 +178,12 @@ namespace IntranetSync.Core.Sync
                         break;
                 }
 
-                // 全表补齐只做一次：修历史漏推。完成后下一轮只从水位查，不再每轮扫全表。
-                bool needReconcile = cfg.Sync.ReconcileEnabled && !wmRec.FullReconcileCompleted;
+                // 平时从水位增量。每隔一段时间再全表补一次，接住后放入视图、但 updated_at 更早的历史行。
+                int reconcileMinutes = cfg.Sync.ReconcileIntervalMinutes;
+                bool reconcileDue = !wmRec.LastFullReconcileAt.HasValue
+                    || reconcileMinutes <= 0
+                    || DateTime.UtcNow - wmRec.LastFullReconcileAt.Value >= TimeSpan.FromMinutes(reconcileMinutes);
+                bool needReconcile = cfg.Sync.ReconcileEnabled && reconcileDue;
                 int viewCount = 0;
                 int visited = 0;
                 int skippedUnchanged = 0;

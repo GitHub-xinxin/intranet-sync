@@ -115,9 +115,12 @@ namespace IntranetSync.Core.Config
         /// <summary>单行 PDF 失败是否阻断整批（默认否）。</summary>
         public bool FailBatchOnPdfError { get; set; } = false;
         /// <summary>
-        /// 尚未完成过全表补齐时，补扫一次历史漏推的行。完成后每轮只从水位增量查询，避免每轮扫全表。
+        /// 按间隔全表补齐一次：水位已经走过、后来才放进视图的历史行也会被补推。
+        /// 已成功的行只核对、不重新下载 PDF。
         /// </summary>
         public bool ReconcileEnabled { get; set; } = true;
+        /// <summary>全表补齐间隔（分钟）。默认 15。设为 0 表示每轮都补齐。</summary>
+        public int ReconcileIntervalMinutes { get; set; } = 15;
     }
 
     public sealed class AdminSettings
