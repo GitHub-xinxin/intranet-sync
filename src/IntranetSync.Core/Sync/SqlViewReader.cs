@@ -42,10 +42,23 @@ namespace IntranetSync.Core.Sync
             }
         }
 
+        /// <summary>
+        /// Incremental page: updated_at &gt; wm, or (updated_at = wm AND pk &gt; lastPk) when PK is configured.
+        /// </summary>
+        public Task<IList<ViewRow>> ReadPageAsync(
+            SqlSettings sql,
+            ViewSettings view,
+            string watermark,
+            CancellationToken ct)
+        {
+            return ReadPageAsync(sql, view, watermark, null, ct);
+        }
+
         public async Task<IList<ViewRow>> ReadPageAsync(
             SqlSettings sql,
             ViewSettings view,
             string watermark,
+            string lastPrimaryKey,
             CancellationToken ct)
         {
             if (string.IsNullOrWhiteSpace(view.ViewName))
@@ -57,12 +70,19 @@ namespace IntranetSync.Core.Sync
                 throw new InvalidOperationException("未配置唯一标识列时，必须配置增量列（如 updated_at），才能按更新时间推送全部记录");
 
             int pageSize = view.PageSize > 0 ? view.PageSize : 300;
-
-            // Bracket identifiers loosely — view/column names come from admin config, not end users.
             string viewName = Bracket(view.ViewName);
 
             string sqlText;
-            if (useIncremental)
+            bool composite = useIncremental && hasPk;
+            if (composite)
+            {
+                string inc = Bracket(view.IncrementalColumn);
+                string pkCol = Bracket(view.PrimaryKeyColumn);
+                sqlText = string.Format(
+                    "SELECT TOP ({0}) * FROM {1} WHERE ({2} > @wm) OR ({2} = @wm AND {3} > @pk) ORDER BY {2} ASC, {3} ASC",
+                    pageSize, viewName, inc, pkCol);
+            }
+            else if (useIncremental)
             {
                 string inc = Bracket(view.IncrementalColumn);
                 sqlText = string.Format(
@@ -71,7 +91,6 @@ namespace IntranetSync.Core.Sync
             }
             else
             {
-                // Hash-mode cursor pages by unique column.
                 string pkCol = Bracket(view.PrimaryKeyColumn);
                 sqlText = string.Format(
                     "SELECT TOP ({0}) * FROM {1} WHERE {2} > @wm ORDER BY {2} ASC",
@@ -85,8 +104,12 @@ namespace IntranetSync.Core.Sync
                 using (var cmd = new SqlCommand(sqlText, conn))
                 {
                     object wmValue;
-                    // For typed comparisons, try parse datetime / long
-                    if (!string.IsNullOrEmpty(watermark))
+                    if (!useIncremental)
+                    {
+                        // Hash-mode: watermark parameter is the last PK cursor.
+                        wmValue = watermark ?? "";
+                    }
+                    else if (!string.IsNullOrEmpty(watermark))
                     {
                         DateTime dt;
                         long lng;
@@ -97,59 +120,138 @@ namespace IntranetSync.Core.Sync
                         else
                             wmValue = watermark;
                     }
-                    else if (useIncremental)
-                    {
-                        // empty watermark → floor below any SQL DATETIME / DATETIME2 value.
-                        // Do NOT use DateTime.MinValue: SqlParameter defaults to SqlDbType.DateTime
-                        // which rejects < 1753-01-01 ("SqlDateTime overflow").
-                        wmValue = SqlDateTimeFloor;
-                    }
                     else
                     {
-                        wmValue = "";
+                        wmValue = SqlDateTimeFloor;
                     }
 
                     AddWatermarkParameter(cmd, wmValue);
-                    _log.Debug("SQL page query view=" + view.ViewName + " wm=" + (watermark ?? ""));
+                    if (composite)
+                    {
+                        cmd.Parameters.Add(new SqlParameter("@pk", lastPrimaryKey ?? ""));
+                    }
+
+                    _log.Debug("SQL page query view=" + view.ViewName
+                        + " wm=" + (watermark ?? "")
+                        + (composite ? (" pk=" + (lastPrimaryKey ?? "")) : ""));
 
                     using (var reader = await cmd.ExecuteReaderAsync(CommandBehavior.SequentialAccess, ct).ConfigureAwait(false))
                     {
                         while (await reader.ReadAsync(ct).ConfigureAwait(false))
                         {
-                            var fields = new JObject();
-                            string pk = null;
-                            string wm = null;
-                            for (int i = 0; i < reader.FieldCount; i++)
-                            {
-                                string name = reader.GetName(i);
-                                object val = reader.IsDBNull(i) ? null : reader.GetValue(i);
-                                JToken token = val == null ? JValue.CreateNull() : JToken.FromObject(val);
-                                fields[name] = token;
-
-                                if (hasPk &&
-                                    string.Equals(name, view.PrimaryKeyColumn, StringComparison.OrdinalIgnoreCase))
-                                    pk = val == null ? null : Convert.ToString(val);
-                                if (useIncremental &&
-                                    string.Equals(name, view.IncrementalColumn, StringComparison.OrdinalIgnoreCase))
-                                    wm = FormatWatermarkValue(val);
-                            }
-
-                            if (!useIncremental)
-                                wm = pk;
-
-                            // 无唯一列时：仅按增量时间推送，pk 可为空（云端按追加/自行处理）
-                            rows.Add(new ViewRow
-                            {
-                                PrimaryKey = pk,
-                                Watermark = wm,
-                                Fields = fields
-                            });
+                            rows.Add(MapRow(reader, view, useIncremental, hasPk));
                         }
                     }
                 }
             }
 
             return rows;
+        }
+
+        public async Task<int> CountAsync(SqlSettings sql, ViewSettings view, CancellationToken ct)
+        {
+            if (string.IsNullOrWhiteSpace(view.ViewName))
+                throw new InvalidOperationException("View name is required");
+
+            string sqlText = "SELECT COUNT_BIG(*) FROM " + Bracket(view.ViewName);
+            using (var conn = new SqlConnection(sql.BuildConnectionString()))
+            {
+                await conn.OpenAsync(ct).ConfigureAwait(false);
+                using (var cmd = new SqlCommand(sqlText, conn))
+                {
+                    object scalar = await cmd.ExecuteScalarAsync(ct).ConfigureAwait(false);
+                    return Convert.ToInt32(scalar);
+                }
+            }
+        }
+
+        /// <summary>
+        /// Cover every physical row. ROW_NUMBER paging does not drop duplicate keys the way
+        /// "pk &gt; @last" does when a page boundary splits two rows with the same person_id.
+        /// </summary>
+        public async Task<IList<ViewRow>> ReadCoveringPageAsync(
+            SqlSettings sql,
+            ViewSettings view,
+            int skip,
+            CancellationToken ct)
+        {
+            if (string.IsNullOrWhiteSpace(view.ViewName))
+                throw new InvalidOperationException("View name is required");
+
+            bool useIncremental = !string.IsNullOrWhiteSpace(view.IncrementalColumn);
+            bool hasPk = !string.IsNullOrWhiteSpace(view.PrimaryKeyColumn);
+            if (!useIncremental && !hasPk)
+                throw new InvalidOperationException("Covering scan requires a primary key or incremental column");
+
+            int pageSize = view.PageSize > 0 ? view.PageSize : 300;
+            if (skip < 0) skip = 0;
+
+            string orderBy;
+            if (useIncremental && hasPk)
+                orderBy = Bracket(view.IncrementalColumn) + " ASC, " + Bracket(view.PrimaryKeyColumn) + " ASC";
+            else if (useIncremental)
+                orderBy = Bracket(view.IncrementalColumn) + " ASC";
+            else
+                orderBy = Bracket(view.PrimaryKeyColumn) + " ASC";
+
+            string sqlText = string.Format(
+                "SELECT * FROM (SELECT *, ROW_NUMBER() OVER (ORDER BY {0}) AS __sync_rn FROM {1}) AS __sync_page WHERE __sync_rn > @skip AND __sync_rn <= @end ORDER BY __sync_rn",
+                orderBy, Bracket(view.ViewName));
+
+            var rows = new List<ViewRow>();
+            using (var conn = new SqlConnection(sql.BuildConnectionString()))
+            {
+                await conn.OpenAsync(ct).ConfigureAwait(false);
+                using (var cmd = new SqlCommand(sqlText, conn))
+                {
+                    cmd.Parameters.Add(new SqlParameter("@skip", skip));
+                    cmd.Parameters.Add(new SqlParameter("@end", skip + pageSize));
+                    _log.Debug("SQL cover page view=" + view.ViewName + " skip=" + skip + " take=" + pageSize);
+
+                    using (var reader = await cmd.ExecuteReaderAsync(CommandBehavior.SequentialAccess, ct).ConfigureAwait(false))
+                    {
+                        while (await reader.ReadAsync(ct).ConfigureAwait(false))
+                        {
+                            rows.Add(MapRow(reader, view, useIncremental, hasPk));
+                        }
+                    }
+                }
+            }
+
+            return rows;
+        }
+
+        private static ViewRow MapRow(SqlDataReader reader, ViewSettings view, bool useIncremental, bool hasPk)
+        {
+            var fields = new JObject();
+            string pk = null;
+            string wm = null;
+            for (int i = 0; i < reader.FieldCount; i++)
+            {
+                string name = reader.GetName(i);
+                if (string.Equals(name, "__sync_rn", StringComparison.OrdinalIgnoreCase))
+                    continue;
+                object val = reader.IsDBNull(i) ? null : reader.GetValue(i);
+                JToken token = val == null ? JValue.CreateNull() : JToken.FromObject(val);
+                fields[name] = token;
+
+                if (hasPk &&
+                    string.Equals(name, view.PrimaryKeyColumn, StringComparison.OrdinalIgnoreCase))
+                    pk = val == null ? null : Convert.ToString(val);
+                if (useIncremental &&
+                    string.Equals(name, view.IncrementalColumn, StringComparison.OrdinalIgnoreCase))
+                    wm = FormatWatermarkValue(val);
+            }
+
+            if (!useIncremental)
+                wm = pk;
+
+            return new ViewRow
+            {
+                PrimaryKey = pk,
+                Watermark = wm,
+                Fields = fields
+            };
         }
 
         /// <summary>
@@ -161,7 +263,6 @@ namespace IntranetSync.Core.Sync
         {
             if (wmValue is DateTime)
             {
-                // Explicit DateTime2 avoids SqlDbType.DateTime range validation on the client.
                 var p = new SqlParameter("@wm", SqlDbType.DateTime2)
                 {
                     Value = ClampToSqlDateTimeRange((DateTime)wmValue)
@@ -187,7 +288,6 @@ namespace IntranetSync.Core.Sync
 
         private static DateTime ClampToSqlDateTimeRange(DateTime dt)
         {
-            // Keep values usable against both DATETIME and DATETIME2 columns.
             return dt < SqlDateTimeFloor ? SqlDateTimeFloor : dt;
         }
 
@@ -204,7 +304,6 @@ namespace IntranetSync.Core.Sync
         private static string Bracket(string ident)
         {
             if (string.IsNullOrWhiteSpace(ident)) return "[]";
-            // allow schema.view
             if (ident.Contains("."))
             {
                 var parts = ident.Split('.');

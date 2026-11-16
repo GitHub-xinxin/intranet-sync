@@ -7,6 +7,7 @@ using System.Threading.Tasks;
 using IntranetSync.Core.Config;
 using IntranetSync.Core.Logging;
 using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
 
 namespace IntranetSync.Core.Cloud
 {
@@ -58,13 +59,14 @@ namespace IntranetSync.Core.Cloud
             using (var resp = await _http.PostAsync(url, content, ct).ConfigureAwait(false))
             {
                 string body = await resp.Content.ReadAsStringAsync().ConfigureAwait(false);
+                _log.Info("POST batch response status=" + (int)resp.StatusCode + " body=" + Truncate(body));
                 if (!resp.IsSuccessStatusCode)
                 {
                     _log.Error("batch upsert failed status=" + (int)resp.StatusCode + " body=" + Truncate(body));
                     throw new InvalidOperationException("Cloud batch failed: HTTP " + (int)resp.StatusCode);
                 }
 
-                return JsonConvert.DeserializeObject<SyncBatchResponse>(body) ?? new SyncBatchResponse();
+                return ParseBatchResponse(body);
             }
         }
 
@@ -115,6 +117,59 @@ namespace IntranetSync.Core.Cloud
                 if (!resp.IsSuccessStatusCode)
                     _log.Warn("pdf/complete register soft-fail status=" + (int)resp.StatusCode);
             }
+        }
+
+        private static SyncBatchResponse ParseBatchResponse(string body)
+        {
+            var parsed = new SyncBatchResponse();
+            if (string.IsNullOrWhiteSpace(body))
+                return parsed;
+
+            JObject jo;
+            try
+            {
+                jo = JObject.Parse(body);
+            }
+            catch
+            {
+                return parsed;
+            }
+
+            var direct = JsonConvert.DeserializeObject<SyncBatchResponse>(body);
+            if (direct != null)
+            {
+                parsed.Accepted = direct.Accepted;
+                parsed.Rejected = direct.Rejected;
+                parsed.Message = direct.Message;
+            }
+
+            if (parsed.Accepted <= 0)
+            {
+                int n;
+                if (TryReadCount(jo, out n) || TryReadCount(jo["data"] as JObject, out n) || TryReadCount(jo["result"] as JObject, out n))
+                    parsed.Accepted = n;
+            }
+
+            return parsed;
+        }
+
+        private static bool TryReadCount(JObject jo, out int count)
+        {
+            count = 0;
+            if (jo == null) return false;
+            string[] keys = { "accepted", "imported", "importCount", "successCount", "success", "count", "total" };
+            foreach (var key in keys)
+            {
+                JToken tok;
+                if (!jo.TryGetValue(key, StringComparison.OrdinalIgnoreCase, out tok) || tok == null)
+                    continue;
+                if (tok.Type == JTokenType.Integer || tok.Type == JTokenType.Float)
+                {
+                    count = tok.Value<int>();
+                    return count > 0;
+                }
+            }
+            return false;
         }
 
         private string ResolveOssTokenUrl()

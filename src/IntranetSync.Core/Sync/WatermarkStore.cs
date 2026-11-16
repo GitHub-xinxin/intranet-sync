@@ -10,7 +10,11 @@ namespace IntranetSync.Core.Sync
         public string ViewName { get; set; }
         public string LastWatermark { get; set; }
         public DateTime? LastSuccessAt { get; set; }
+        /// <summary>Last primary key at the current watermark (composite cursor).</summary>
+        public string LastPrimaryKey { get; set; }
         public string LastRowHashModeCursor { get; set; }
+        /// <summary>历史缺口已按全表补齐过。之后每轮只从水位增量查询。</summary>
+        public bool FullReconcileCompleted { get; set; }
     }
 
     /// <summary>
@@ -37,20 +41,42 @@ namespace IntranetSync.Core.Sync
                 WatermarkRecord r;
                 if (_map.TryGetValue(viewName ?? "", out r))
                     return r;
-                return new WatermarkRecord { ViewName = viewName, LastWatermark = "" };
+                return new WatermarkRecord { ViewName = viewName, LastWatermark = "", LastPrimaryKey = "" };
             }
         }
 
-        public void Advance(string viewName, string watermark)
+        public void Advance(string viewName, string watermark, string lastPrimaryKey = null)
         {
             lock (_gate)
             {
+                WatermarkRecord prev;
+                _map.TryGetValue(viewName ?? "", out prev);
                 _map[viewName] = new WatermarkRecord
                 {
                     ViewName = viewName,
                     LastWatermark = watermark ?? "",
+                    LastPrimaryKey = lastPrimaryKey ?? (prev != null ? prev.LastPrimaryKey : "") ?? "",
+                    LastRowHashModeCursor = prev != null ? prev.LastRowHashModeCursor : null,
+                    FullReconcileCompleted = prev != null && prev.FullReconcileCompleted,
                     LastSuccessAt = DateTime.UtcNow
                 };
+                Persist();
+            }
+        }
+
+        public void MarkFullReconcileCompleted(string viewName)
+        {
+            lock (_gate)
+            {
+                WatermarkRecord prev;
+                if (!_map.TryGetValue(viewName ?? "", out prev))
+                {
+                    prev = new WatermarkRecord { ViewName = viewName, LastWatermark = "", LastPrimaryKey = "" };
+                }
+
+                prev.FullReconcileCompleted = true;
+                prev.LastSuccessAt = DateTime.UtcNow;
+                _map[viewName] = prev;
                 Persist();
             }
         }

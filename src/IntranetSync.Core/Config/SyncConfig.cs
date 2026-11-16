@@ -61,7 +61,9 @@ namespace IntranetSync.Core.Config
     public sealed class ViewSettings
     {
         public string ViewName { get; set; } = "";
-        /// <summary>可选。业务唯一列；留空表示不按唯一键去重，仅按增量列推送全部行。</summary>
+        /// <summary>
+        /// 业务唯一列（如 person_id）。强烈建议配置：用于复合水位游标 + 主键补漏扫描，避免漏同步。
+        /// </summary>
         public string PrimaryKeyColumn { get; set; } = "";
         /// <summary>增量列；无唯一列时必填。为空则回退行哈希（需唯一列）。</summary>
         public string IncrementalColumn { get; set; } = "updated_at";
@@ -112,6 +114,10 @@ namespace IntranetSync.Core.Config
         public bool Enabled { get; set; } = false;
         /// <summary>单行 PDF 失败是否阻断整批（默认否）。</summary>
         public bool FailBatchOnPdfError { get; set; } = false;
+        /// <summary>
+        /// 尚未完成过全表补齐时，补扫一次历史漏推的行。完成后每轮只从水位增量查询，避免每轮扫全表。
+        /// </summary>
+        public bool ReconcileEnabled { get; set; } = true;
     }
 
     public sealed class AdminSettings
