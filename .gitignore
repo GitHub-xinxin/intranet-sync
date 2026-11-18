@@ -1,13 +1,61 @@
+# NuGet / build outputs
 packages/
 **/bin/
 **/obj/
 dist/
+*.nupkg
+nuget.exe
+
+# Visual Studio / IDE
+.vs/
 *.user
 *.suo
-.vs/
+*.userosscache
+*.sln.docstates
+*.rsuser
+[Dd]ebug/
+[Rr]elease/
+x64/
+x86/
+[Aa][Rr][Mm]/
+[Aa][Rr][Mm]64/
+*.dbmdl
+*.jfm
+*.pidb
+*.svclog
+*.scc
+
+# Installer redistributables (large; CI downloads)
+installer/redist/*.exe
+
+# Runtime / local secrets & state
 *.log
-nuget.exe
+logs/
+*.tmp
+*.temp
+row-hashes.json
+*.local.json
+appsettings.*.local.json
+**/sync-config.json
+**/config.local.json
+**/secrets.json
+
+# OS junk
 .DS_Store
 **/.DS_Store
-# Large Microsoft redist; CI downloads it
-installer/redist/*.exe
+Thumbs.db
+Desktop.ini
+
+# Archives & dumps (do not publish)
+*.zip
+*.7z
+*.rar
+*.sql
+*.bak
+*.dump
+
+# Test / local artifacts
+TestResults/
+coverage/
+*.coverage
+*.coveragexml

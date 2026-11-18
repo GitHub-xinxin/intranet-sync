@@ -114,8 +114,37 @@ namespace IntranetSync.Core.Pdf
                    fileUri.AbsolutePath.StartsWith(baseUri.AbsolutePath, StringComparison.OrdinalIgnoreCase);
         }
 
+        /// <summary>
+        /// 已是对象键（非 http(s) URL），例如 wk/reports/xxx.pdf。
+        /// 去掉访问链接后字段里会写 oss_key，再次 Resolve 时不能当 HTTP 去下。
+        /// </summary>
+        public static bool IsBareOssObjectKey(string value, OssSettings oss)
+        {
+            string n = Normalize(value);
+            if (string.IsNullOrWhiteSpace(n))
+                return false;
+            if (n.IndexOf("://", StringComparison.Ordinal) >= 0)
+                return false;
+
+            string prefix = oss != null && !string.IsNullOrWhiteSpace(oss.Prefix)
+                ? oss.Prefix.Trim().Trim('/')
+                : "";
+            if (!string.IsNullOrEmpty(prefix) &&
+                n.StartsWith(prefix + "/", StringComparison.OrdinalIgnoreCase))
+                return true;
+
+            // 常见：wk/reports/sha.pdf
+            if (n.EndsWith(".pdf", StringComparison.OrdinalIgnoreCase) && n.IndexOf('/') >= 0)
+                return true;
+
+            return false;
+        }
+
         public static string ExtractOssKeyFromConfiguredUrl(string url, OssSettings oss)
         {
+            if (IsBareOssObjectKey(url, oss))
+                return Normalize(url);
+
             OssUrlParts parts;
             if (TryParseOssUrl(url, out parts))
                 return parts.Key;

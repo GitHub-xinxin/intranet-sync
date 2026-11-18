@@ -86,7 +86,12 @@ namespace IntranetSync.Core.Config
         /// <summary>服务 Token；落盘加密，日志打码。</summary>
         public string ServiceToken { get; set; } = "";
         public string TenantId { get; set; } = "default";
+        /// <summary>单次云端 HTTP 请求超时（秒）。超时后取消请求，避免整轮同步永久挂起。</summary>
         public int TimeoutSeconds { get; set; } = 60;
+        /// <summary>batch 推送遇超时/网络/5xx 时的重试次数（含首次）。默认 3。</summary>
+        public int BatchRetryCount { get; set; } = 3;
+        /// <summary>batch 重试间隔基数（秒）；第 n 次重试前等待 n * 该值。</summary>
+        public int BatchRetryDelaySeconds { get; set; } = 5;
     }
 
     public sealed class OssSettings
@@ -100,18 +105,19 @@ namespace IntranetSync.Core.Config
         public string AccessKeyId { get; set; } = "";
         public string AccessKeySecret { get; set; } = "";
         public string SecurityToken { get; set; } = "";
-        /// <summary>公网访问域名（可选）；UseSignedUrl=false 时用于拼 cloud URL。</summary>
+        /// <summary>公网访问域名（可选，已不再用于拼 PDF 访问链接；保留兼容旧配置）。</summary>
         public string PublicBaseUrl { get; set; } = "";
-        /// <summary>true = 上传后签发私有桶 GET 预签名临时 URL（推荐私有 Bucket）。</summary>
-        public bool UseSignedUrl { get; set; } = true;
-        /// <summary>预签名 URL 有效秒数（默认 24h）。使用 STS 时不会超过 STS 过期时间。</summary>
+        /// <summary>已废弃：代理不再签发 PDF 访问链接（云端不使用）。保留字段仅兼容旧配置反序列化。</summary>
+        public bool UseSignedUrl { get; set; } = false;
+        /// <summary>已废弃：见 UseSignedUrl。</summary>
         public int SignedUrlExpireSeconds { get; set; } = 86400;
     }
 
     public sealed class SyncRuntimeSettings
     {
         public int IntervalSeconds { get; set; } = 180;
-        public bool Enabled { get; set; } = false;
+        /// <summary>是否按 IntervalSeconds 自动跑同步。默认开启；可用「停止同步」关闭。</summary>
+        public bool Enabled { get; set; } = true;
         /// <summary>单行 PDF 失败是否阻断整批（默认否）。</summary>
         public bool FailBatchOnPdfError { get; set; } = false;
         /// <summary>
@@ -121,6 +127,11 @@ namespace IntranetSync.Core.Config
         public bool ReconcileEnabled { get; set; } = true;
         /// <summary>全表补齐间隔（分钟）。默认 15。设为 0 表示每轮都补齐。</summary>
         public int ReconcileIntervalMinutes { get; set; } = 15;
+        /// <summary>
+        /// 单轮同步最长秒数。超时则取消本轮并在下一间隔重试（水位未推进的数据会再推）。
+        /// 0 = 不额外限制整轮（仍受每次 HTTP TimeoutSeconds 约束）。默认 1800（30 分钟）。
+        /// </summary>
+        public int MaxRoundSeconds { get; set; } = 1800;
     }
 
     public sealed class AdminSettings

@@ -80,6 +80,26 @@ namespace IntranetSync.Core.Sync
             }
         }
 
+        public int Count
+        {
+            get { lock (_gate) { return _hashes.Count; } }
+        }
+
+        /// <summary>清空本地行哈希，迫使后续补齐重新推送。</summary>
+        public void Clear()
+        {
+            lock (_gate)
+            {
+                _hashes.Clear();
+                try
+                {
+                    if (System.IO.File.Exists(_path))
+                        System.IO.File.WriteAllText(_path, "{}");
+                }
+                catch { /* ignore */ }
+            }
+        }
+
         private void Load()
         {
             if (!System.IO.File.Exists(_path)) return;

@@ -11,6 +11,7 @@ namespace IntranetSync.Core.Pdf
     public sealed class PdfResolveResult
     {
         public bool Success { get; set; }
+        /// <summary>兼容旧字段；云端不使用访问链接时与 OssKey 相同或为空。</summary>
         public string CloudUrl { get; set; }
         public string Sha256 { get; set; }
         public string OssKey { get; set; }
@@ -19,8 +20,8 @@ namespace IntranetSync.Core.Pdf
     }
 
     /// <summary>
-    /// Download → SHA256 → local/cloud dedupe → stream upload OSS → return cloud URL.
-    /// Concurrency limited (default 2–3). Never places PDF bytes into DB/JSON payloads.
+    /// Download → SHA256 → local/cloud dedupe → stream upload OSS.
+    /// 只保证对象上到 OSS（返回 ossKey）；不再签发/拼装 PDF 访问链接（云端不使用）。
     /// </summary>
     public sealed class PdfPipeline
     {
@@ -66,19 +67,12 @@ namespace IntranetSync.Core.Pdf
             await _gate.WaitAsync(ct).ConfigureAwait(false);
             try
             {
-                // Source already points at destination private OSS — do not anonymous-GET (403).
-                if (PdfUrlUtil.IsConfiguredOssUrl(url, _oss))
+                // 已是 oss_key（非绝对 URL）或已指向目标桶：直接跳过下载/上传。
+                if (PdfUrlUtil.IsBareOssObjectKey(url, _oss) || PdfUrlUtil.IsConfiguredOssUrl(url, _oss))
                 {
-                    string key = PdfUrlUtil.ExtractOssKeyFromConfiguredUrl(url, _oss);
+                    string key = PdfUrlUtil.ExtractOssKeyFromConfiguredUrl(url, _oss) ?? url;
                     _log.Info("PDF already on configured OSS, skip download/upload key=" + (key ?? "(unknown)"));
-                    string access = await ResolveAccessUrlAsync(key, url, ct).ConfigureAwait(false);
-                    return new PdfResolveResult
-                    {
-                        Success = true,
-                        CloudUrl = access,
-                        OssKey = key,
-                        SkippedDuplicate = true
-                    };
+                    return OkKey(key, null, skipped: true);
                 }
 
                 using (var downloaded = await AcquirePdfAsync(url, ct).ConfigureAwait(false))
@@ -87,15 +81,9 @@ namespace IntranetSync.Core.Pdf
                     if (_map.TryGet(downloaded.Sha256, out local) &&
                         (!string.IsNullOrEmpty(local.OssKey) || !string.IsNullOrEmpty(local.Url)))
                     {
-                        string access = await ResolveAccessUrlAsync(local.OssKey, local.Url, ct).ConfigureAwait(false);
-                        return new PdfResolveResult
-                        {
-                            Success = true,
-                            CloudUrl = access,
-                            Sha256 = downloaded.Sha256,
-                            OssKey = local.OssKey,
-                            SkippedDuplicate = true
-                        };
+                        string key = !string.IsNullOrEmpty(local.OssKey) ? local.OssKey : local.Url;
+                        _log.Info("PDF already on configured OSS, skip download/upload key=" + (key ?? "(unknown)"));
+                        return OkKey(key, downloaded.Sha256, skipped: true);
                     }
 
                     // optional cloud lookup
@@ -105,16 +93,10 @@ namespace IntranetSync.Core.Pdf
                         if (remote != null && remote.Found &&
                             (!string.IsNullOrEmpty(remote.Url) || !string.IsNullOrEmpty(remote.OssKey)))
                         {
-                            string access = await ResolveAccessUrlAsync(remote.OssKey, remote.Url, ct).ConfigureAwait(false);
-                            _map.Put(downloaded.Sha256, remote.OssKey, access);
-                            return new PdfResolveResult
-                            {
-                                Success = true,
-                                CloudUrl = access,
-                                Sha256 = downloaded.Sha256,
-                                OssKey = remote.OssKey,
-                                SkippedDuplicate = true
-                            };
+                            string key = !string.IsNullOrEmpty(remote.OssKey) ? remote.OssKey : remote.Url;
+                            _map.Put(downloaded.Sha256, remote.OssKey, key);
+                            _log.Info("PDF found via cloud lookup, skip upload key=" + (key ?? "(unknown)"));
+                            return OkKey(key, downloaded.Sha256, skipped: true);
                         }
                     }
                     catch (Exception ex)
@@ -123,25 +105,24 @@ namespace IntranetSync.Core.Pdf
                     }
 
                     var uploaded = await _uploader.UploadAsync(downloaded.TempPath, downloaded.Sha256, ct).ConfigureAwait(false);
-                    _map.Put(downloaded.Sha256, uploaded.OssKey, uploaded.Url);
+                    _map.Put(downloaded.Sha256, uploaded.OssKey, uploaded.OssKey);
 
                     try
                     {
-                        await _api.RegisterPdfAsync(downloaded.Sha256, uploaded.OssKey, uploaded.Url, ct).ConfigureAwait(false);
+                        await _api.RegisterPdfAsync(downloaded.Sha256, uploaded.OssKey, uploaded.OssKey, ct).ConfigureAwait(false);
                     }
                     catch (Exception ex)
                     {
                         _log.Warn("PDF register soft-fail: " + ex.Message);
                     }
 
-                    return new PdfResolveResult
-                    {
-                        Success = true,
-                        CloudUrl = uploaded.Url,
-                        Sha256 = downloaded.Sha256,
-                        OssKey = uploaded.OssKey
-                    };
+                    return OkKey(uploaded.OssKey, downloaded.Sha256, skipped: false);
                 }
+            }
+            catch (OperationCanceledException)
+            {
+                // 整轮超时 / 停止服务：不算 PDF 业务失败，交给上层结束本轮，下轮自动重试。
+                throw;
             }
             catch (Exception ex)
             {
@@ -154,33 +135,17 @@ namespace IntranetSync.Core.Pdf
             }
         }
 
-        /// <summary>
-        /// Prefer a fresh private-bucket signed URL when enabled; fall back to stored/static URL.
-        /// </summary>
-        private async Task<string> ResolveAccessUrlAsync(string ossKey, string fallbackUrl, CancellationToken ct)
+        private static PdfResolveResult OkKey(string ossKey, string sha256, bool skipped)
         {
-            if (_oss.UseSignedUrl && !string.IsNullOrWhiteSpace(ossKey))
+            return new PdfResolveResult
             {
-                try
-                {
-                    return await _uploader.BuildAccessUrlAsync(ossKey, ct).ConfigureAwait(false);
-                }
-                catch (Exception ex)
-                {
-                    _log.Warn("PDF signed URL soft-fail: " + ex.Message);
-                    if (!string.IsNullOrEmpty(fallbackUrl))
-                        return fallbackUrl;
-                    throw;
-                }
-            }
-
-            if (!string.IsNullOrEmpty(fallbackUrl))
-                return fallbackUrl;
-
-            if (!string.IsNullOrWhiteSpace(ossKey))
-                return await _uploader.BuildAccessUrlAsync(ossKey, ct).ConfigureAwait(false);
-
-            return fallbackUrl;
+                Success = true,
+                OssKey = ossKey,
+                // 云端不用访问链接：字段里放 ossKey，便于对照；不再签 GET URL
+                CloudUrl = ossKey,
+                Sha256 = sha256,
+                SkippedDuplicate = skipped
+            };
         }
 
         private async Task<DownloadedPdf> AcquirePdfAsync(string url, CancellationToken ct)

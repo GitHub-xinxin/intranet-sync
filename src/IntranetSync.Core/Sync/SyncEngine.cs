@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Security.Cryptography;
+using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using IntranetSync.Core.Cloud;
@@ -53,6 +55,7 @@ namespace IntranetSync.Core.Sync
 
         public FailureQueue Failures { get { return _failures; } }
         public WatermarkStore Watermarks { get { return _watermarks; } }
+        public RowHashCursor RowHashes { get { return _rowHashes; } }
 
         public async Task<string> TestSqlAsync(CancellationToken ct)
         {
@@ -76,11 +79,10 @@ namespace IntranetSync.Core.Sync
             bool hasPk = !string.IsNullOrWhiteSpace(cfg.View.PrimaryKeyColumn);
             if (!hasPk)
             {
-                // 线上配置经常把主键留空。VW_PERSON 的业务键是 person_id，空主键会导致
-                // 云端按空 pk 覆盖、补漏扫描整表跳过。
+                // 空主键时 SQL 游标仍用 person_id；云端/本地行身份见 RowIdentity（不按人去重）。
                 cfg.View.PrimaryKeyColumn = "person_id";
                 hasPk = true;
-                _log.Warn("PrimaryKeyColumn 为空，本轮按 person_id 做游标、补漏和云端 pk");
+                _log.Warn("PrimaryKeyColumn 为空，本轮 SQL 游标按 person_id；云端 pk 按物理行（含 updated_at/PDF）");
             }
             if (!useIncremental && !hasPk)
             {
@@ -190,7 +192,8 @@ namespace IntranetSync.Core.Sync
                 if (needReconcile)
                 {
                     viewCount = await _reader.CountAsync(cfg.Sql, cfg.View, ct).ConfigureAwait(false);
-                    _log.Info("Reconcile start view=" + cfg.View.ViewName + " viewCount=" + viewCount);
+                    _log.Info("Reconcile start view=" + cfg.View.ViewName
+                        + " viewCount=" + viewCount);
                     int skip = 0;
                     int guard = 0;
                     while (visited < viewCount)
@@ -215,7 +218,8 @@ namespace IntranetSync.Core.Sync
                             ct.ThrowIfCancellationRequested();
                             string identity = RowIdentity(row);
                             string rowHash = RowHasher.Compute(identity, row.Fields);
-                            if (!string.IsNullOrEmpty(identity) && !_rowHashes.HasChanged(identity, rowHash))
+                            if (!string.IsNullOrEmpty(identity)
+                                && !_rowHashes.HasChanged(identity, rowHash))
                             {
                                 skippedUnchanged++;
                                 continue;
@@ -261,7 +265,9 @@ namespace IntranetSync.Core.Sync
                 result.PdfFailures = pdfFail;
                 result.Duration = sw.Elapsed;
 
-                if (needReconcile && visited != viewCount)
+                // PageSize 对齐时 visited 常略大于扫描开始时的 viewCount（视图增长或最后一页凑整）。
+                // 仅当 visited < viewCount 才算未扫完；否则会永远 INCOMPLETE、每轮强制全表补齐。
+                if (needReconcile && visited < viewCount)
                 {
                     result.Success = false;
                     result.Message = string.Format(
@@ -285,18 +291,70 @@ namespace IntranetSync.Core.Sync
         }
 
         /// <summary>
-        /// Local identity. person_id alone collapses the duplicate row; append updated_at so both are tracked.
-        /// Cloud pk stays person_id so import-persons updates the same person instead of inserting a second copy.
+        /// 视图「物理行」身份：不按 person_id 去重。
+        /// 同人可有多条检测（职业/健康、不同报告），用 person_id + updated_at + PDF 指纹区分，
+        /// 本地 row-hashes 与云端 upsert 的 pk 都用此键，保证视图有几行就对应推几行。
         /// </summary>
         private static string RowIdentity(ViewRow row)
         {
-            string pk = row == null ? "" : (row.PrimaryKey ?? "");
-            string wm = row == null ? "" : (row.Watermark ?? "");
-            if (string.IsNullOrEmpty(pk))
-                return wm;
-            if (string.IsNullOrEmpty(wm))
+            if (row == null) return "";
+            string pk = row.PrimaryKey ?? "";
+            string wm = row.Watermark ?? "";
+            string pdf = PdfFingerprint(row.Fields);
+            if (!string.IsNullOrEmpty(pk) && !string.IsNullOrEmpty(wm) && !string.IsNullOrEmpty(pdf))
+                return pk + "|" + wm + "|" + pdf;
+            if (!string.IsNullOrEmpty(pk) && !string.IsNullOrEmpty(wm))
+                return pk + "|" + wm;
+            if (!string.IsNullOrEmpty(pk) && !string.IsNullOrEmpty(pdf))
+                return pk + "|" + pdf;
+            if (!string.IsNullOrEmpty(pk))
                 return pk;
-            return pk + "|" + wm;
+            if (!string.IsNullOrEmpty(wm) && !string.IsNullOrEmpty(pdf))
+                return wm + "|" + pdf;
+            return !string.IsNullOrEmpty(wm) ? wm : pdf;
+        }
+
+        /// <summary>从 PDF 列取稳定短指纹（URL 规范化后 SHA256 前 12 位），区分同人不同报告。</summary>
+        private static string PdfFingerprint(JObject fields)
+        {
+            if (fields == null) return "";
+            string[] prefer = { "PDF", "pdf", "pdf_url", "PdfUrl" };
+            foreach (var name in prefer)
+            {
+                JToken tok;
+                if (!fields.TryGetValue(name, out tok) || tok == null || tok.Type == JTokenType.Null)
+                    continue;
+                string raw = tok.ToString();
+                if (string.IsNullOrWhiteSpace(raw)) continue;
+                return ShortSha(NormalizePdfUrl(raw));
+            }
+            foreach (var prop in fields.Properties())
+            {
+                if (prop.Name == null || prop.Name.IndexOf("pdf", StringComparison.OrdinalIgnoreCase) < 0)
+                    continue;
+                if (prop.Value == null || prop.Value.Type == JTokenType.Null) continue;
+                string raw = prop.Value.ToString();
+                if (string.IsNullOrWhiteSpace(raw)) continue;
+                return ShortSha(NormalizePdfUrl(raw));
+            }
+            return "";
+        }
+
+        private static string NormalizePdfUrl(string url)
+        {
+            return (url ?? "").Trim().Replace('\\', '/').ToLowerInvariant();
+        }
+
+        private static string ShortSha(string text)
+        {
+            using (var sha = SHA256.Create())
+            {
+                byte[] hash = sha.ComputeHash(Encoding.UTF8.GetBytes(text ?? ""));
+                var sb = new StringBuilder(12);
+                for (int i = 0; i < 6; i++)
+                    sb.Append(hash[i].ToString("x2"));
+                return sb.ToString();
+            }
         }
 
         private async Task<SyncRow> TryBuildSyncRowAsync(
@@ -309,12 +367,17 @@ namespace IntranetSync.Core.Sync
         {
             var pdfMeta = new Dictionary<string, PdfMeta>(StringComparer.OrdinalIgnoreCase);
             bool rowPdfFailed = false;
+            string cloudPk = RowIdentity(row);
 
             if (cfg.View.PdfUrlColumns != null)
             {
+                var seenPdfCols = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                 foreach (var col in cfg.View.PdfUrlColumns)
                 {
                     if (string.IsNullOrWhiteSpace(col)) continue;
+                    if (!seenPdfCols.Add(col.Trim()))
+                        continue; // 避免 PDF/pdf 重复列：第一次已把字段写成 oss_key，第二次会误当 URL 下载
+
                     JToken tok;
                     if (!row.Fields.TryGetValue(col, out tok) || tok == null || tok.Type == JTokenType.Null)
                         continue;
@@ -330,7 +393,7 @@ namespace IntranetSync.Core.Sync
                         _failures.Enqueue(new FailureItem
                         {
                             ViewName = cfg.View.ViewName,
-                            PrimaryKey = row.PrimaryKey,
+                            PrimaryKey = cloudPk,
                             PdfColumn = col,
                             PdfUrl = intranetUrl,
                             Error = resolved.Error,
@@ -343,12 +406,14 @@ namespace IntranetSync.Core.Sync
                         continue;
                     }
 
-                    row.Fields[col] = resolved.CloudUrl;
+                    // 字段与 pdf.url 只带 oss_key，不再写入预签名/公网访问链接
+                    string keyOrUrl = !string.IsNullOrEmpty(resolved.OssKey) ? resolved.OssKey : resolved.CloudUrl;
+                    row.Fields[col] = keyOrUrl;
                     pdfMeta[col] = new PdfMeta
                     {
                         Sha256 = resolved.Sha256,
                         OssKey = resolved.OssKey,
-                        Url = resolved.CloudUrl
+                        Url = keyOrUrl
                     };
                 }
             }
@@ -356,17 +421,17 @@ namespace IntranetSync.Core.Sync
             if (rowPdfFailed && cfg.Sync.FailBatchOnPdfError)
                 return null;
 
-            string pk = row.PrimaryKey;
-            if (string.IsNullOrEmpty(pk) && row.Fields != null)
+            if (string.IsNullOrEmpty(cloudPk) && row.Fields != null)
             {
                 JToken pkTok;
                 if (row.Fields.TryGetValue(cfg.View.PrimaryKeyColumn ?? "", out pkTok) && pkTok != null && pkTok.Type != JTokenType.Null)
-                    pk = pkTok.ToString();
+                    cloudPk = pkTok.ToString();
             }
 
             return new SyncRow
             {
-                PrimaryKey = pk,
+                // 云端 upsert 键 = 物理行身份（含 PDF），禁止只按 person_id 合并
+                PrimaryKey = cloudPk,
                 Watermark = row.Watermark,
                 RowHash = rowHash,
                 Fields = row.Fields,

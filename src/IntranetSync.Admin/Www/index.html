@@ -111,6 +111,16 @@
           <input id="cloud.tenantId" />
           <span class="hint">多租户隔离标识，也会用于 OSS 对象路径</span>
         </label>
+        <label>
+          <span class="lbl">云端请求超时（秒） <em>TimeoutSeconds</em></span>
+          <input id="cloud.timeoutSeconds" type="number" min="10" max="600" placeholder="60" />
+          <span class="hint">单次推送无响应则取消；默认 60。避免云端卡死拖住整轮同步</span>
+        </label>
+        <label>
+          <span class="lbl">推送重试次数 <em>BatchRetryCount</em></span>
+          <input id="cloud.batchRetryCount" type="number" min="1" max="10" placeholder="3" />
+          <span class="hint">超时/网络/5xx 时重试（含首次），默认 3；水位未推进，数据不会丢</span>
+        </label>
       </div>
     </section>
 
@@ -154,21 +164,8 @@
           <input id="oss.accessKeySecret" type="password" />
           <span class="hint">与 AccessKey Id 配对；落盘加密</span>
         </label>
-        <label>
-          <span class="lbl">公网访问域名 <em>Public Base URL</em></span>
-          <input id="oss.publicBaseUrl" placeholder="https://cdn.example.com" />
-          <span class="hint">可选；关闭「预签名临时链接」时用于拼最终 PDF 地址</span>
-        </label>
-        <label class="check">
-          <input id="oss.useSignedUrl" type="checkbox" checked />
-          生成私有桶预签名临时链接（推荐）
-        </label>
-        <label>
-          <span class="lbl">临时链接有效秒数 <em>SignedUrlExpireSeconds</em></span>
-          <input id="oss.signedUrlExpireSeconds" type="number" min="60" max="604800" placeholder="86400" />
-          <span class="hint">默认 86400（24 小时），最长 7 天；使用 STS 时不会超过 STS 凭证寿命</span>
-        </label>
       </div>
+      <p class="hint-block">PDF 只上传到 OSS（写入 oss_key）；代理不再签发访问链接，由云端自行处理对象访问。</p>
     </section>
 
     <section>
@@ -213,8 +210,13 @@
           <input id="sync.intervalSeconds" type="number" min="30" />
           <span class="hint">每隔多少秒自动跑一整轮；建议 ≥ 60。例：180 = 每 3 分钟</span>
         </label>
+        <label>
+          <span class="lbl">单轮最长（秒） <em>MaxRoundSeconds</em></span>
+          <input id="sync.maxRoundSeconds" type="number" min="0" max="86400" placeholder="1800" />
+          <span class="hint">整轮超时则取消并下一轮重试；0=不限制。默认 1800（30 分钟）</span>
+        </label>
         <label class="check">
-          <input id="sync.enabled" type="checkbox" />
+          <input id="sync.enabled" type="checkbox" checked />
           启用定时同步（勾选后按间隔自动跑）
         </label>
       </div>

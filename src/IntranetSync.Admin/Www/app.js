@@ -37,6 +37,8 @@
     setVal("cloud.ossTokenUrl", cfg.cloud && cfg.cloud.ossTokenUrl);
     setVal("cloud.serviceToken", "");
     setVal("cloud.tenantId", cfg.cloud && cfg.cloud.tenantId);
+    setVal("cloud.timeoutSeconds", (cfg.cloud && cfg.cloud.timeoutSeconds) || 60);
+    setVal("cloud.batchRetryCount", (cfg.cloud && cfg.cloud.batchRetryCount) || 3);
 
     setVal("oss.endpoint", cfg.oss && cfg.oss.endpoint);
     setVal("oss.bucket", cfg.oss && cfg.oss.bucket);
@@ -44,16 +46,14 @@
     setVal("oss.useSts", cfg.oss && cfg.oss.useSts);
     setVal("oss.accessKeyId", cfg.oss && cfg.oss.accessKeyId);
     setVal("oss.accessKeySecret", "");
-    setVal("oss.publicBaseUrl", cfg.oss && cfg.oss.publicBaseUrl);
-    setVal("oss.useSignedUrl", !cfg.oss || cfg.oss.useSignedUrl !== false);
-    setVal("oss.signedUrlExpireSeconds", (cfg.oss && cfg.oss.signedUrlExpireSeconds) || 86400);
 
     var maxMb = cfg.pdf && cfg.pdf.maxBytes ? Math.round(cfg.pdf.maxBytes / (1024 * 1024)) : 50;
     setVal("pdf.maxMb", maxMb);
     setVal("pdf.maxConcurrency", cfg.pdf && cfg.pdf.maxConcurrency);
     setVal("pdf.authMode", (cfg.pdf && cfg.pdf.authMode) || "anonymous");
     setVal("sync.intervalSeconds", cfg.sync && cfg.sync.intervalSeconds);
-    setVal("sync.enabled", cfg.sync && cfg.sync.enabled);
+    setVal("sync.maxRoundSeconds", (cfg.sync && cfg.sync.maxRoundSeconds != null) ? cfg.sync.maxRoundSeconds : 1800);
+    setVal("sync.enabled", !cfg.sync || cfg.sync.enabled !== false);
     setVal("sync.failBatchOnPdfError", cfg.sync && cfg.sync.failBatchOnPdfError);
   }
 
@@ -100,7 +100,9 @@
         apiBaseUrl: getVal("cloud.apiBaseUrl"),
         ossTokenUrl: getVal("cloud.ossTokenUrl"),
         serviceToken: getVal("cloud.serviceToken") || "********",
-        tenantId: getVal("cloud.tenantId")
+        tenantId: getVal("cloud.tenantId"),
+        timeoutSeconds: getVal("cloud.timeoutSeconds") || 60,
+        batchRetryCount: getVal("cloud.batchRetryCount") || 3
       },
       oss: {
         endpoint: getVal("oss.endpoint"),
@@ -109,9 +111,7 @@
         useSts: getVal("oss.useSts"),
         accessKeyId: getVal("oss.accessKeyId"),
         accessKeySecret: getVal("oss.accessKeySecret") || "********",
-        publicBaseUrl: getVal("oss.publicBaseUrl"),
-        useSignedUrl: getVal("oss.useSignedUrl"),
-        signedUrlExpireSeconds: getVal("oss.signedUrlExpireSeconds") || 86400
+        useSignedUrl: false
       },
       pdf: {
         maxBytes: maxMb * 1024 * 1024,
@@ -120,6 +120,7 @@
       },
       sync: {
         intervalSeconds: getVal("sync.intervalSeconds") || 180,
+        maxRoundSeconds: getVal("sync.maxRoundSeconds") != null ? getVal("sync.maxRoundSeconds") : 1800,
         enabled: getVal("sync.enabled"),
         failBatchOnPdfError: getVal("sync.failBatchOnPdfError")
       },

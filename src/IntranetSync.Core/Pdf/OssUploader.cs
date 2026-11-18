@@ -62,33 +62,9 @@ namespace IntranetSync.Core.Pdf
                 client.PutObject(bucket, ossKey, fs, meta);
             }
 
-            string url = BuildAccessUrl(client, token, endpoint, bucket, publicBase, ossKey);
-            _log.Info("OSS uploaded key=" + ossKey + (_oss.UseSignedUrl ? " (signed)" : ""));
-            return new UploadResult { OssKey = ossKey, Url = url };
-        }
-
-        /// <summary>
-        /// Build cloud-facing PDF URL for an existing object (fresh signature when UseSignedUrl).
-        /// </summary>
-        public async Task<string> BuildAccessUrlAsync(string ossKey, CancellationToken ct)
-        {
-            if (string.IsNullOrWhiteSpace(ossKey))
-                throw new ArgumentException("ossKey is empty");
-
-            OssTokenResponse token = await ResolveTokenAsync(ct).ConfigureAwait(false);
-            if (token != null && token.Mock)
-            {
-                string mockBase = !string.IsNullOrEmpty(token.PublicBaseUrl) ? token.PublicBaseUrl : _oss.PublicBaseUrl;
-                return string.IsNullOrEmpty(mockBase)
-                    ? ossKey
-                    : mockBase.TrimEnd('/') + "/" + ossKey;
-            }
-
-            string endpoint;
-            string bucket;
-            string publicBase;
-            var client = CreateClient(token, out endpoint, out bucket, out publicBase);
-            return BuildAccessUrl(client, token, endpoint, bucket, publicBase, ossKey);
+            // 只上传对象，不再签发/拼装访问链接（云端不使用）
+            _log.Info("OSS uploaded key=" + ossKey);
+            return new UploadResult { OssKey = ossKey, Url = ossKey };
         }
 
         /// <summary>
@@ -177,11 +153,8 @@ namespace IntranetSync.Core.Pdf
                 }
             }
 
-            string publicUrl = string.IsNullOrEmpty(token.PublicBaseUrl)
-                ? url
-                : token.PublicBaseUrl.TrimEnd('/') + "/" + ossKey;
             _log.Info("Mock OSS uploaded key=" + ossKey);
-            return new UploadResult { OssKey = ossKey, Url = publicUrl };
+            return new UploadResult { OssKey = ossKey, Url = ossKey };
         }
 
         private async Task<OssTokenResponse> GetTokenAsync(CancellationToken ct)
@@ -198,64 +171,6 @@ namespace IntranetSync.Core.Pdf
                 _cachedToken = token;
             }
             return token;
-        }
-
-        private string BuildAccessUrl(
-            OssClient client,
-            OssTokenResponse token,
-            string endpoint,
-            string bucket,
-            string publicBase,
-            string ossKey)
-        {
-            if (_oss.UseSignedUrl)
-            {
-                DateTime expiration = ResolveSignedExpiration(token);
-                Uri signed = client.GeneratePresignedUri(bucket, ossKey, expiration, SignHttpMethod.Get);
-                _log.Info("OSS signed URL expireUtc=" + expiration.ToUniversalTime().ToString("o") + " key=" + ossKey);
-                return signed.ToString();
-            }
-
-            return BuildStaticUrl(publicBase, endpoint, bucket, ossKey);
-        }
-
-        private DateTime ResolveSignedExpiration(OssTokenResponse token)
-        {
-            int seconds = _oss.SignedUrlExpireSeconds > 0 ? _oss.SignedUrlExpireSeconds : 86400;
-            // Aliyun OSS V1 presign practical upper bound ~7 days for some clients; allow config but clamp to 7d.
-            if (seconds > 7 * 24 * 3600)
-                seconds = 7 * 24 * 3600;
-            if (seconds < 60)
-                seconds = 60;
-
-            DateTime expiration = DateTime.UtcNow.AddSeconds(seconds);
-
-            // STS credentials cannot sign beyond their own lifetime.
-            if (token != null && token.Expiration > DateTime.MinValue)
-            {
-                DateTime stsExp = token.Expiration.Kind == DateTimeKind.Unspecified
-                    ? DateTime.SpecifyKind(token.Expiration, DateTimeKind.Utc)
-                    : token.Expiration.ToUniversalTime();
-                if (expiration > stsExp)
-                    expiration = stsExp;
-            }
-
-            // SDK examples commonly use local Kind; pass UTC-equivalent local for consistency.
-            return expiration.Kind == DateTimeKind.Utc ? expiration.ToLocalTime() : expiration;
-        }
-
-        private static string BuildStaticUrl(string publicBase, string endpoint, string bucket, string ossKey)
-        {
-            if (!string.IsNullOrEmpty(publicBase))
-                return publicBase.TrimEnd('/') + "/" + ossKey;
-
-            // virtual-host style
-            string host = endpoint.StartsWith("http", StringComparison.OrdinalIgnoreCase)
-                ? endpoint.TrimEnd('/')
-                : "https://" + bucket + "." + endpoint.TrimEnd('/');
-            if (!endpoint.StartsWith("http", StringComparison.OrdinalIgnoreCase))
-                return "https://" + bucket + "." + endpoint.TrimEnd('/') + "/" + ossKey;
-            return host + "/" + ossKey;
         }
     }
 }

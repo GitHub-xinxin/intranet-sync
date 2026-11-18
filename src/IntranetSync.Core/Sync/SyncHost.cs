@@ -64,10 +64,29 @@ namespace IntranetSync.Core.Sync
 
         public async Task<SyncRunResult> RunOnceAsync()
         {
-            var result = await _engine.RunOnceAsync(CancellationToken.None).ConfigureAwait(false);
-            _lastResult = result;
-            _lastRunUtc = DateTime.UtcNow;
-            return result;
+            var cfg = _store.LoadOrDefault();
+            using (var roundCts = CreateRoundCts(CancellationToken.None, cfg.Sync.MaxRoundSeconds))
+            {
+                try
+                {
+                    var result = await _engine.RunOnceAsync(roundCts.Token).ConfigureAwait(false);
+                    _lastResult = result;
+                    _lastRunUtc = DateTime.UtcNow;
+                    return result;
+                }
+                catch (OperationCanceledException)
+                {
+                    var timedOut = new SyncRunResult
+                    {
+                        Success = false,
+                        Message = "Round canceled or timed out (MaxRoundSeconds=" + cfg.Sync.MaxRoundSeconds + ")"
+                    };
+                    _log.Error(timedOut.Message);
+                    _lastResult = timedOut;
+                    _lastRunUtc = DateTime.UtcNow;
+                    return timedOut;
+                }
+            }
         }
 
         private async Task LoopAsync(CancellationToken ct)
@@ -81,20 +100,39 @@ namespace IntranetSync.Core.Sync
                     interval = cfg.Sync.IntervalSeconds > 0 ? cfg.Sync.IntervalSeconds : 180;
                     if (cfg.Sync.Enabled)
                     {
-                        _lastResult = await _engine.RunOnceAsync(ct).ConfigureAwait(false);
-                        _lastRunUtc = DateTime.UtcNow;
+                        using (var roundCts = CreateRoundCts(ct, cfg.Sync.MaxRoundSeconds))
+                        {
+                            try
+                            {
+                                _lastResult = await _engine.RunOnceAsync(roundCts.Token).ConfigureAwait(false);
+                                _lastRunUtc = DateTime.UtcNow;
+                            }
+                            catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+                            {
+                                // Round-level timeout / cloud hang cancel — keep host loop alive.
+                                _log.Error("Sync round timed out or canceled; will retry next interval (MaxRoundSeconds=" +
+                                           cfg.Sync.MaxRoundSeconds + ")");
+                                _lastResult = new SyncRunResult
+                                {
+                                    Success = false,
+                                    Message = "Round timed out; retry next interval"
+                                };
+                                _lastRunUtc = DateTime.UtcNow;
+                            }
+                        }
                     }
                     else
                     {
                         _log.Debug("Sync disabled; sleeping");
                     }
                 }
-                catch (OperationCanceledException)
+                catch (OperationCanceledException) when (ct.IsCancellationRequested)
                 {
                     break;
                 }
                 catch (Exception ex)
                 {
+                    // Includes cloud TimeoutException after retries — watermark not advanced, next round retries.
                     _log.Error("Sync loop error", ex);
                 }
 
@@ -107,6 +145,14 @@ namespace IntranetSync.Core.Sync
                     break;
                 }
             }
+        }
+
+        private static CancellationTokenSource CreateRoundCts(CancellationToken parent, int maxRoundSeconds)
+        {
+            var cts = CancellationTokenSource.CreateLinkedTokenSource(parent);
+            if (maxRoundSeconds > 0)
+                cts.CancelAfter(TimeSpan.FromSeconds(maxRoundSeconds));
+            return cts;
         }
 
         public void Dispose()
