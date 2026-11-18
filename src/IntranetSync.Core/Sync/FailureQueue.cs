@@ -42,13 +42,24 @@ namespace IntranetSync.Core.Sync
             item.FailedAtUtc = DateTime.UtcNow;
             lock (_gate)
             {
-                // replace same pk+column
-                _items.RemoveAll(x =>
-                    string.Equals(x.ViewName, item.ViewName, StringComparison.OrdinalIgnoreCase)
-                    && string.Equals(x.PrimaryKey, item.PrimaryKey, StringComparison.OrdinalIgnoreCase)
-                    && string.Equals(x.PdfColumn, item.PdfColumn, StringComparison.OrdinalIgnoreCase));
+                // replace same pk+column；attempts 累加，便于观察间歇性故障
+                var prev = _items.FirstOrDefault(x => SameKey(x, item.ViewName, item.PrimaryKey, item.PdfColumn));
+                item.Attempts = (prev != null ? prev.Attempts : 0) + 1;
+                if (prev != null)
+                    _items.Remove(prev);
                 _items.Add(item);
                 Persist();
+            }
+        }
+
+        /// <summary>PDF 成功后从失败队列摘掉对应项。</summary>
+        public void Remove(string viewName, string primaryKey, string pdfColumn)
+        {
+            lock (_gate)
+            {
+                int n = _items.RemoveAll(x => SameKey(x, viewName, primaryKey, pdfColumn));
+                if (n > 0)
+                    Persist();
             }
         }
 
@@ -67,6 +78,13 @@ namespace IntranetSync.Core.Sync
                 _items.Clear();
                 Persist();
             }
+        }
+
+        private static bool SameKey(FailureItem x, string viewName, string primaryKey, string pdfColumn)
+        {
+            return string.Equals(x.ViewName, viewName, StringComparison.OrdinalIgnoreCase)
+                && string.Equals(x.PrimaryKey, primaryKey, StringComparison.OrdinalIgnoreCase)
+                && string.Equals(x.PdfColumn, pdfColumn, StringComparison.OrdinalIgnoreCase);
         }
 
         private void Load()

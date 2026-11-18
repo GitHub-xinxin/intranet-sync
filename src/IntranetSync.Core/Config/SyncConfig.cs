@@ -116,13 +116,16 @@ namespace IntranetSync.Core.Config
     public sealed class SyncRuntimeSettings
     {
         public int IntervalSeconds { get; set; } = 180;
-        /// <summary>是否按 IntervalSeconds 自动跑同步。默认开启；可用「停止同步」关闭。</summary>
+        /// <summary>是否按 IntervalSeconds 自动跑同步。默认 true（管理台「启用定时同步」默认勾选）；「停止同步」会写成 false。</summary>
         public bool Enabled { get; set; } = true;
-        /// <summary>单行 PDF 失败是否阻断整批（默认否）。</summary>
+        /// <summary>
+        /// true：任一 PDF 失败则整批中止、水位不前进。
+        /// false（默认）：该行不推送、不提交行哈希，其它行继续；靠全表补齐重试 PDF。
+        /// </summary>
         public bool FailBatchOnPdfError { get; set; } = false;
         /// <summary>
-        /// 按间隔全表补齐一次：水位已经走过、后来才放进视图的历史行也会被补推。
-        /// 已成功的行只核对、不重新下载 PDF。
+        /// 按间隔全表补齐一次：水位已经走过、后来才放进视图的历史行也会被补推；
+        /// 也用于重试「PDF 曾失败未提交哈希」的行。已成功的行只核对、不重新下载 PDF。
         /// </summary>
         public bool ReconcileEnabled { get; set; } = true;
         /// <summary>全表补齐间隔（分钟）。默认 15。设为 0 表示每轮都补齐。</summary>

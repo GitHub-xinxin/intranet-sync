@@ -53,7 +53,8 @@
     setVal("pdf.authMode", (cfg.pdf && cfg.pdf.authMode) || "anonymous");
     setVal("sync.intervalSeconds", cfg.sync && cfg.sync.intervalSeconds);
     setVal("sync.maxRoundSeconds", (cfg.sync && cfg.sync.maxRoundSeconds != null) ? cfg.sync.maxRoundSeconds : 1800);
-    setVal("sync.enabled", !cfg.sync || cfg.sync.enabled !== false);
+    // 缺省 / 未写 enabled 时视为开启（与 SyncRuntimeSettings.Enabled 默认 true 一致）
+    setVal("sync.enabled", !(cfg.sync && cfg.sync.enabled === false));
     setVal("sync.failBatchOnPdfError", cfg.sync && cfg.sync.failBatchOnPdfError);
   }
 
@@ -250,12 +251,20 @@
     };
     $("btnStart").onclick = function () {
       api("/api/sync/start", "POST", {})
-        .then(function (r) { show("actionResult", r); return refreshStatus(); })
+        .then(function (r) {
+          setVal("sync.enabled", true);
+          show("actionResult", r);
+          return refreshStatus();
+        })
         .catch(function (e) { show("actionResult", e.message); });
     };
     $("btnStop").onclick = function () {
       api("/api/sync/stop", "POST", {})
-        .then(function (r) { show("actionResult", r); return refreshStatus(); })
+        .then(function (r) {
+          setVal("sync.enabled", false);
+          show("actionResult", r);
+          return refreshStatus();
+        })
         .catch(function (e) { show("actionResult", e.message); });
     };
     $("btnRun").onclick = function () {

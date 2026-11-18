@@ -149,14 +149,15 @@ namespace IntranetSync.Core.Sync
                         var built = await TryBuildSyncRowAsync(
                                 cfg, pipeline, row, rowHash, ct,
                                 () => { pdfFail++; }).ConfigureAwait(false);
-                        if (built == null)
-                            throw new InvalidOperationException("Row was not pushed; incremental page aborted to avoid data loss");
-
-                        batchRows.Add(built);
-                        builtIdentities.Add(identity);
+                        // PDF 失败：不推送、不提交哈希；仍推进水位，避免卡死后续行。全表补齐会重试。
                         lastWm = row.Watermark ?? lastWm;
                         if (!string.IsNullOrEmpty(row.PrimaryKey))
                             lastIncPk = row.PrimaryKey;
+                        if (built == null)
+                            continue;
+
+                        batchRows.Add(built);
+                        builtIdentities.Add(identity);
                     }
 
                     if (batchRows.Count > 0)
@@ -172,7 +173,7 @@ namespace IntranetSync.Core.Sync
                         _rowHashes.Persist();
                     }
 
-                    // Only advance after a fully accepted page (or empty push page that was all hash-skips).
+                    // Only advance after a fully accepted page (or empty push page: hash-skips / PDF skips).
                     if (!string.IsNullOrEmpty(lastWm))
                         _watermarks.Advance(cfg.View.ViewName, lastWm, lastIncPk);
 
@@ -228,8 +229,9 @@ namespace IntranetSync.Core.Sync
                             var built = await TryBuildSyncRowAsync(
                                     cfg, pipeline, row, rowHash, ct,
                                     () => { pdfFail++; }).ConfigureAwait(false);
+                            // PDF 失败：本行不推、不写哈希；下轮/下次全表补齐会再试（哈希未提交）。
                             if (built == null)
-                                throw new InvalidOperationException("Row was not pushed; covering scan aborted to avoid data loss");
+                                continue;
 
                             batchRows.Add(built);
                             batchKeys.Add(identity);
@@ -366,7 +368,6 @@ namespace IntranetSync.Core.Sync
             Action onPdfFail)
         {
             var pdfMeta = new Dictionary<string, PdfMeta>(StringComparer.OrdinalIgnoreCase);
-            bool rowPdfFailed = false;
             string cloudPk = RowIdentity(row);
 
             if (cfg.View.PdfUrlColumns != null)
@@ -389,21 +390,22 @@ namespace IntranetSync.Core.Sync
                     if (!resolved.Success)
                     {
                         onPdfFail();
-                        rowPdfFailed = true;
                         _failures.Enqueue(new FailureItem
                         {
                             ViewName = cfg.View.ViewName,
                             PrimaryKey = cloudPk,
                             PdfColumn = col,
                             PdfUrl = intranetUrl,
-                            Error = resolved.Error,
-                            Attempts = 1
+                            Error = resolved.Error
                         });
 
                         if (cfg.Sync.FailBatchOnPdfError)
                             throw new InvalidOperationException("PDF failed and FailBatchOnPdfError=true: " + resolved.Error);
 
-                        continue;
+                        // 默认：整行跳过（不推云、不提交行哈希），等全表补齐/下轮再试。
+                        _log.Warn("PDF failed, skip row (no push/hash) pk=" + (cloudPk ?? "")
+                            + " col=" + col + " err=" + resolved.Error);
+                        return null;
                     }
 
                     // 字段与 pdf.url 只带 oss_key，不再写入预签名/公网访问链接
@@ -415,11 +417,9 @@ namespace IntranetSync.Core.Sync
                         OssKey = resolved.OssKey,
                         Url = keyOrUrl
                     };
+                    _failures.Remove(cfg.View.ViewName, cloudPk, col);
                 }
             }
-
-            if (rowPdfFailed && cfg.Sync.FailBatchOnPdfError)
-                return null;
 
             if (string.IsNullOrEmpty(cloudPk) && row.Fields != null)
             {

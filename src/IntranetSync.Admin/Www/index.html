@@ -193,7 +193,7 @@
         </label>
         <label class="check">
           <input id="sync.failBatchOnPdfError" type="checkbox" />
-          PDF 失败则整批失败（默认关闭，单行失败不阻断）
+          PDF 失败则整批失败（默认关闭：失败行不推送/不记哈希，等全表补齐重试）
         </label>
       </div>
     </section>
@@ -217,7 +217,7 @@
         </label>
         <label class="check">
           <input id="sync.enabled" type="checkbox" checked />
-          启用定时同步（勾选后按间隔自动跑）
+          启用定时同步（默认勾选；勾选后按间隔自动跑）
         </label>
       </div>
       <div class="actions">
@@ -245,6 +245,7 @@
             <h3>PDF 失败队列 Failures</h3>
             <button type="button" id="btnClearFailures" class="danger small">清除失败记录</button>
           </div>
+          <p class="hint-block">失败行不会推云端；保持 <em>ReconcileEnabled</em>（默认开）时，约每 15 分钟全表补齐会自动重试下载并上传 OSS。</p>
           <pre id="failures" class="out tall"></pre>
         </div>
       </div>
