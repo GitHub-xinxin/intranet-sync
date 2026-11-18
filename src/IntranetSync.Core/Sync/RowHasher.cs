@@ -100,6 +100,23 @@ namespace IntranetSync.Core.Sync
             }
         }
 
+        /// <summary>
+        /// 清理旧版「person_id|updated_at|pdf」复合身份键，只保留纯 person_id。
+        /// </summary>
+        public int PurgeLegacyCompositeKeys()
+        {
+            lock (_gate)
+            {
+                var drop = _hashes.Keys.Where(k => k != null && k.IndexOf('|') >= 0).ToList();
+                if (drop.Count == 0)
+                    return 0;
+                foreach (var k in drop)
+                    _hashes.Remove(k);
+                Persist();
+                return drop.Count;
+            }
+        }
+
         private void Load()
         {
             if (!System.IO.File.Exists(_path)) return;

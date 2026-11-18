@@ -1,8 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
-using System.Security.Cryptography;
-using System.Text;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using IntranetSync.Core.Cloud;
@@ -18,17 +17,29 @@ namespace IntranetSync.Core.Sync
         public bool Success { get; set; }
         public int RowsRead { get; set; }
         public int RowsUpserted { get; set; }
-        public int RowsReconciled { get; set; }
+        public int RowsPdfRetried { get; set; }
         public int ViewCount { get; set; }
-        public int RowsVisited { get; set; }
+        public int PendingPdfFailures { get; set; }
         public int PdfFailures { get; set; }
         public string Message { get; set; }
         public TimeSpan Duration { get; set; }
+
+        /// <summary>兼容旧管理台字段名；现为 PDF 重试成功条数。</summary>
+        public int RowsReconciled
+        {
+            get { return RowsPdfRetried; }
+            set { RowsPdfRetried = value; }
+        }
+
+        /// <summary>兼容旧字段；已不再做全表扫描。</summary>
+        public int RowsVisited { get; set; }
     }
 
     /// <summary>
-    /// Incremental sync: watermark → paged SELECT → PDF pipeline → batch upsert,
-    /// then optional PK reconcile to catch rows missed by watermark.
+    /// 检测记录同步：
+    /// 1) person_id 作为唯一键（云端 upsert / 本地行身份）
+    /// 2) updated_at 单调水位增量拉取（报告修改会推高 updated_at，再次 upsert）
+    /// 3) PDF 失败入队，本轮末尾按 person_id 回查重试（不再做 15 分钟全表扫描）
     /// </summary>
     public sealed class SyncEngine
     {
@@ -76,19 +87,21 @@ namespace IntranetSync.Core.Sync
             }
 
             bool useIncremental = !string.IsNullOrWhiteSpace(cfg.View.IncrementalColumn);
-            bool hasPk = !string.IsNullOrWhiteSpace(cfg.View.PrimaryKeyColumn);
-            if (!hasPk)
+            if (string.IsNullOrWhiteSpace(cfg.View.PrimaryKeyColumn))
             {
-                // 空主键时 SQL 游标仍用 person_id；云端/本地行身份见 RowIdentity（不按人去重）。
                 cfg.View.PrimaryKeyColumn = "person_id";
-                hasPk = true;
-                _log.Warn("PrimaryKeyColumn 为空，本轮 SQL 游标按 person_id；云端 pk 按物理行（含 updated_at/PDF）");
+                _log.Warn("PrimaryKeyColumn 为空，默认使用 person_id 作为检测记录唯一键");
             }
-            if (!useIncremental && !hasPk)
+
+            if (!useIncremental)
             {
-                result.Message = "无唯一标识列时必须配置增量列（如 updated_at）";
+                result.Message = "必须配置增量列 updated_at（报告生成/修改时间水位）";
                 return result;
             }
+
+            int purged = _rowHashes.PurgeLegacyCompositeKeys();
+            if (purged > 0)
+                _log.Info("已清理旧复合行身份哈希 " + purged + " 条（现仅用 person_id）");
 
             using (var api = new CloudApiClient(cfg.Cloud, _log))
             {
@@ -99,28 +112,19 @@ namespace IntranetSync.Core.Sync
 
                 int totalRead = 0;
                 int totalUpsert = 0;
-                int totalReconciled = 0;
                 int pdfFail = 0;
+                int pdfRetried = 0;
                 string lastWm = cursor;
                 string lastIncPk = lastPk;
                 const int maxPages = 100;
                 int pageSize = cfg.View.PageSize > 0 ? cfg.View.PageSize : 300;
 
-                // ---- Phase 1: incremental (or hash-mode) pages ----
+                // ---- Phase 1: updated_at 水位增量（修改报告会抬高 updated_at，按 person_id upsert）----
                 for (int page = 0; page < maxPages; page++)
                 {
                     ct.ThrowIfCancellationRequested();
-                    IList<ViewRow> rows;
-                    if (useIncremental)
-                    {
-                        rows = await _reader.ReadPageAsync(cfg.Sql, cfg.View, lastWm, lastIncPk, ct)
-                            .ConfigureAwait(false);
-                    }
-                    else
-                    {
-                        rows = await _reader.ReadPageAsync(cfg.Sql, cfg.View, lastWm, ct)
-                            .ConfigureAwait(false);
-                    }
+                    IList<ViewRow> rows = await _reader.ReadPageAsync(cfg.Sql, cfg.View, lastWm, lastIncPk, ct)
+                        .ConfigureAwait(false);
 
                     if (rows == null || rows.Count == 0)
                         break;
@@ -133,23 +137,19 @@ namespace IntranetSync.Core.Sync
                     {
                         ct.ThrowIfCancellationRequested();
                         string identity = RowIdentity(row);
-                        string rowHash = RowHasher.Compute(identity, row.Fields);
-
-                        // 仅「无增量列 + 有唯一列」时用行哈希去重
-                        if (!useIncremental)
+                        if (string.IsNullOrEmpty(identity))
                         {
-                            if (string.IsNullOrEmpty(identity) || !_rowHashes.HasChanged(identity, rowHash))
-                            {
-                                lastWm = row.Watermark ?? lastWm;
-                                lastIncPk = row.PrimaryKey ?? lastIncPk;
-                                continue;
-                            }
+                            _log.Warn("跳过无 person_id 的行 wm=" + (row.Watermark ?? ""));
+                            lastWm = row.Watermark ?? lastWm;
+                            continue;
                         }
 
+                        string rowHash = RowHasher.Compute(identity, row.Fields);
                         var built = await TryBuildSyncRowAsync(
-                                cfg, pipeline, row, rowHash, ct,
+                                cfg, pipeline, row, identity, rowHash, ct,
                                 () => { pdfFail++; }).ConfigureAwait(false);
-                        // PDF 失败：不推送、不提交哈希；仍推进水位，避免卡死后续行。全表补齐会重试。
+
+                        // PDF 失败：不推送、不提交哈希；水位仍前进，避免卡死；靠失败队列定时重试闭环。
                         lastWm = row.Watermark ?? lastWm;
                         if (!string.IsNullOrEmpty(row.PrimaryKey))
                             lastIncPk = row.PrimaryKey;
@@ -173,7 +173,6 @@ namespace IntranetSync.Core.Sync
                         _rowHashes.Persist();
                     }
 
-                    // Only advance after a fully accepted page (or empty push page: hash-skips / PDF skips).
                     if (!string.IsNullOrEmpty(lastWm))
                         _watermarks.Advance(cfg.View.ViewName, lastWm, lastIncPk);
 
@@ -181,194 +180,193 @@ namespace IntranetSync.Core.Sync
                         break;
                 }
 
-                // 平时从水位增量。每隔一段时间再全表补一次，接住后放入视图、但 updated_at 更早的历史行。
-                int reconcileMinutes = cfg.Sync.ReconcileIntervalMinutes;
-                bool reconcileDue = !wmRec.LastFullReconcileAt.HasValue
-                    || reconcileMinutes <= 0
-                    || DateTime.UtcNow - wmRec.LastFullReconcileAt.Value >= TimeSpan.FromMinutes(reconcileMinutes);
-                bool needReconcile = cfg.Sync.ReconcileEnabled && reconcileDue;
+                // ---- Phase 2: 定时重试此前 PDF 失败的 person_id（替代 15 分钟全表扫描）----
+                if (cfg.Sync.PdfRetryEnabled)
+                {
+                    pdfRetried = await RetryFailedPdfsAsync(cfg, api, pipeline, ct, () => { pdfFail++; })
+                        .ConfigureAwait(false);
+                    totalUpsert += pdfRetried;
+                }
+
                 int viewCount = 0;
-                int visited = 0;
-                int skippedUnchanged = 0;
-                if (needReconcile)
+                try
                 {
                     viewCount = await _reader.CountAsync(cfg.Sql, cfg.View, ct).ConfigureAwait(false);
-                    _log.Info("Reconcile start view=" + cfg.View.ViewName
-                        + " viewCount=" + viewCount);
-                    int skip = 0;
-                    int guard = 0;
-                    while (visited < viewCount)
-                    {
-                        ct.ThrowIfCancellationRequested();
-                        if (++guard > 100000)
-                            throw new InvalidOperationException("Covering scan exceeded page guard");
-
-                        var rows = await _reader.ReadCoveringPageAsync(cfg.Sql, cfg.View, skip, ct)
-                            .ConfigureAwait(false);
-                        if (rows == null || rows.Count == 0)
-                            break;
-
-                        visited += rows.Count;
-                        skip += rows.Count;
-                        totalRead += rows.Count;
-                        var batchRows = new List<SyncRow>();
-                        var batchKeys = new List<string>();
-
-                        foreach (var row in rows)
-                        {
-                            ct.ThrowIfCancellationRequested();
-                            string identity = RowIdentity(row);
-                            string rowHash = RowHasher.Compute(identity, row.Fields);
-                            if (!string.IsNullOrEmpty(identity)
-                                && !_rowHashes.HasChanged(identity, rowHash))
-                            {
-                                skippedUnchanged++;
-                                continue;
-                            }
-
-                            var built = await TryBuildSyncRowAsync(
-                                    cfg, pipeline, row, rowHash, ct,
-                                    () => { pdfFail++; }).ConfigureAwait(false);
-                            // PDF 失败：本行不推、不写哈希；下轮/下次全表补齐会再试（哈希未提交）。
-                            if (built == null)
-                                continue;
-
-                            batchRows.Add(built);
-                            batchKeys.Add(identity);
-                        }
-
-                        if (batchRows.Count > 0)
-                        {
-                            int accepted = await PostBatchStrictAsync(api, cfg, batchRows, ct).ConfigureAwait(false);
-                            totalUpsert += accepted;
-                            totalReconciled += accepted;
-
-                            for (int i = 0; i < batchRows.Count; i++)
-                            {
-                                if (!string.IsNullOrEmpty(batchKeys[i]))
-                                    _rowHashes.Commit(batchKeys[i], batchRows[i].RowHash);
-                            }
-                            _rowHashes.Persist();
-                        }
-
-                        if (rows.Count < pageSize)
-                            break;
-                    }
-
-                    _log.Info("Reconcile done visited=" + visited + " viewCount=" + viewCount + " pushed=" + totalReconciled + " unchanged=" + skippedUnchanged);
                 }
+                catch (Exception ex)
+                {
+                    _log.Warn("COUNT view failed: " + ex.Message);
+                }
+
+                int pending = _failures.CountForView(cfg.View.ViewName);
 
                 sw.Stop();
                 result.RowsRead = totalRead;
                 result.RowsUpserted = totalUpsert;
-                result.RowsReconciled = totalReconciled;
+                result.RowsPdfRetried = pdfRetried;
                 result.ViewCount = viewCount;
-                result.RowsVisited = visited;
+                result.PendingPdfFailures = pending;
                 result.PdfFailures = pdfFail;
                 result.Duration = sw.Elapsed;
-
-                // PageSize 对齐时 visited 常略大于扫描开始时的 viewCount（视图增长或最后一页凑整）。
-                // 仅当 visited < viewCount 才算未扫完；否则会永远 INCOMPLETE、每轮强制全表补齐。
-                if (needReconcile && visited < viewCount)
-                {
-                    result.Success = false;
-                    result.Message = string.Format(
-                        "INCOMPLETE visited={0} viewCount={1} upsert={2} pdfFail={3}. Full reconcile not finished; next round will continue it.",
-                        visited, viewCount, totalUpsert, pdfFail);
-                    _log.Error(result.Message);
-                    return result;
-                }
-
-                if (needReconcile)
-                    _watermarks.MarkFullReconcileCompleted(cfg.View.ViewName);
-
                 result.Success = true;
                 result.Message = string.Format(
-                    "OK mode={0} viewCount={1} visited={2} upsert={3} reconcile={4} unchanged={5} pdfFail={6} elapsed={7}ms",
-                    needReconcile ? "reconcile" : "watermark",
-                    viewCount, visited, totalUpsert, totalReconciled, skippedUnchanged, pdfFail, (int)sw.Elapsed.TotalMilliseconds);
+                    "OK mode=watermark+pdfRetry viewCount={0} upsert={1} pdfRetry={2} pdfFail={3} pendingPdf={4} syncedHashes={5} elapsed={6}ms",
+                    viewCount, totalUpsert, pdfRetried, pdfFail, pending, _rowHashes.Count, (int)sw.Elapsed.TotalMilliseconds);
                 _log.Info(result.Message);
+
+                if (pending > 0)
+                {
+                    _log.Warn("闭环未完成：视图 " + viewCount + " 行，仍有 " + pending
+                        + " 条 PDF 失败待重试；成功后云端应按 person_id 与视图对齐");
+                }
+
                 return result;
             }
         }
 
-        /// <summary>
-        /// 视图「物理行」身份：不按 person_id 去重。
-        /// 同人可有多条检测（职业/健康、不同报告），用 person_id + updated_at + PDF 指纹区分，
-        /// 本地 row-hashes 与云端 upsert 的 pk 都用此键，保证视图有几行就对应推几行。
-        /// </summary>
+        /// <summary>检测记录唯一身份 = person_id（PrimaryKeyColumn）。</summary>
         private static string RowIdentity(ViewRow row)
         {
             if (row == null) return "";
-            string pk = row.PrimaryKey ?? "";
-            string wm = row.Watermark ?? "";
-            string pdf = PdfFingerprint(row.Fields);
-            if (!string.IsNullOrEmpty(pk) && !string.IsNullOrEmpty(wm) && !string.IsNullOrEmpty(pdf))
-                return pk + "|" + wm + "|" + pdf;
-            if (!string.IsNullOrEmpty(pk) && !string.IsNullOrEmpty(wm))
-                return pk + "|" + wm;
-            if (!string.IsNullOrEmpty(pk) && !string.IsNullOrEmpty(pdf))
-                return pk + "|" + pdf;
-            if (!string.IsNullOrEmpty(pk))
-                return pk;
-            if (!string.IsNullOrEmpty(wm) && !string.IsNullOrEmpty(pdf))
-                return wm + "|" + pdf;
-            return !string.IsNullOrEmpty(wm) ? wm : pdf;
-        }
+            if (!string.IsNullOrEmpty(row.PrimaryKey))
+                return row.PrimaryKey.Trim();
 
-        /// <summary>从 PDF 列取稳定短指纹（URL 规范化后 SHA256 前 12 位），区分同人不同报告。</summary>
-        private static string PdfFingerprint(JObject fields)
-        {
-            if (fields == null) return "";
-            string[] prefer = { "PDF", "pdf", "pdf_url", "PdfUrl" };
+            if (row.Fields == null) return "";
+            string[] prefer = { "person_id", "PersonId", "PERSON_ID" };
             foreach (var name in prefer)
             {
                 JToken tok;
-                if (!fields.TryGetValue(name, out tok) || tok == null || tok.Type == JTokenType.Null)
+                if (!row.Fields.TryGetValue(name, out tok) || tok == null || tok.Type == JTokenType.Null)
                     continue;
-                string raw = tok.ToString();
-                if (string.IsNullOrWhiteSpace(raw)) continue;
-                return ShortSha(NormalizePdfUrl(raw));
-            }
-            foreach (var prop in fields.Properties())
-            {
-                if (prop.Name == null || prop.Name.IndexOf("pdf", StringComparison.OrdinalIgnoreCase) < 0)
-                    continue;
-                if (prop.Value == null || prop.Value.Type == JTokenType.Null) continue;
-                string raw = prop.Value.ToString();
-                if (string.IsNullOrWhiteSpace(raw)) continue;
-                return ShortSha(NormalizePdfUrl(raw));
+                string v = tok.ToString();
+                if (!string.IsNullOrWhiteSpace(v))
+                    return v.Trim();
             }
             return "";
         }
 
-        private static string NormalizePdfUrl(string url)
+        /// <summary>失败队列旧复合键 → person_id。</summary>
+        private static string NormalizePersonIdKey(string raw)
         {
-            return (url ?? "").Trim().Replace('\\', '/').ToLowerInvariant();
+            if (string.IsNullOrWhiteSpace(raw)) return "";
+            string s = raw.Trim();
+            int pipe = s.IndexOf('|');
+            if (pipe > 0)
+                s = s.Substring(0, pipe).Trim();
+            return s;
         }
 
-        private static string ShortSha(string text)
+        /// <summary>
+        /// 从失败队列按 person_id 回查视图，重新跑 PDF → upsert；成功则出队。
+        /// </summary>
+        private async Task<int> RetryFailedPdfsAsync(
+            SyncConfig cfg,
+            CloudApiClient api,
+            PdfPipeline pipeline,
+            CancellationToken ct,
+            Action onPdfFail)
         {
-            using (var sha = SHA256.Create())
+            int take = cfg.Sync.PdfRetryBatchSize > 0 ? cfg.Sync.PdfRetryBatchSize : 100;
+            var pending = _failures.ListForView(cfg.View.ViewName, take);
+            if (pending == null || pending.Count == 0)
+                return 0;
+
+            // 旧队列可能存过 person_id|updated_at|pdf 复合键；重试只取第一段 person_id。
+            var keys = pending
+                .Where(x => !string.IsNullOrWhiteSpace(x.PrimaryKey))
+                .Select(x => NormalizePersonIdKey(x.PrimaryKey))
+                .Where(k => !string.IsNullOrEmpty(k))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            if (keys.Count == 0)
+                return 0;
+
+            _log.Info("PDF retry start view=" + cfg.View.ViewName
+                + " failures=" + pending.Count + " distinctPk=" + keys.Count);
+
+            IList<ViewRow> rows = await _reader.ReadByPrimaryKeysAsync(cfg.Sql, cfg.View, keys, ct)
+                .ConfigureAwait(false);
+
+            var found = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var batchRows = new List<SyncRow>();
+            var builtIdentities = new List<string>();
+            int upserted = 0;
+
+            foreach (var row in rows ?? new ViewRow[0])
             {
-                byte[] hash = sha.ComputeHash(Encoding.UTF8.GetBytes(text ?? ""));
-                var sb = new StringBuilder(12);
-                for (int i = 0; i < 6; i++)
-                    sb.Append(hash[i].ToString("x2"));
-                return sb.ToString();
+                ct.ThrowIfCancellationRequested();
+                string identity = RowIdentity(row);
+                if (string.IsNullOrEmpty(identity))
+                    continue;
+                found.Add(identity);
+
+                string rowHash = RowHasher.Compute(identity, row.Fields);
+                var built = await TryBuildSyncRowAsync(
+                        cfg, pipeline, row, identity, rowHash, ct, onPdfFail).ConfigureAwait(false);
+                if (built == null)
+                    continue;
+
+                batchRows.Add(built);
+                builtIdentities.Add(identity);
+
+                if (batchRows.Count >= (cfg.View.PageSize > 0 ? cfg.View.PageSize : 300))
+                {
+                    upserted += await FlushRetryBatchAsync(api, cfg, batchRows, builtIdentities, ct)
+                        .ConfigureAwait(false);
+                    batchRows.Clear();
+                    builtIdentities.Clear();
+                }
             }
+
+            if (batchRows.Count > 0)
+            {
+                upserted += await FlushRetryBatchAsync(api, cfg, batchRows, builtIdentities, ct)
+                    .ConfigureAwait(false);
+            }
+
+            // 视图中已不存在的 person_id：视为过期失败项，直接出队，避免永久占坑。
+            foreach (var key in keys)
+            {
+                if (found.Contains(key))
+                    continue;
+                _failures.RemoveAllForPrimaryKey(cfg.View.ViewName, key);
+                _log.Warn("PDF retry: person_id 已不在视图，移除失败项 pk=" + key);
+            }
+
+            _log.Info("PDF retry done upsert=" + upserted + " pending=" + _failures.CountForView(cfg.View.ViewName));
+            return upserted;
+        }
+
+        private async Task<int> FlushRetryBatchAsync(
+            CloudApiClient api,
+            SyncConfig cfg,
+            List<SyncRow> batchRows,
+            List<string> builtIdentities,
+            CancellationToken ct)
+        {
+            int accepted = await PostBatchStrictAsync(api, cfg, batchRows, ct).ConfigureAwait(false);
+            for (int i = 0; i < batchRows.Count; i++)
+            {
+                if (!string.IsNullOrEmpty(builtIdentities[i]))
+                    _rowHashes.Commit(builtIdentities[i], batchRows[i].RowHash);
+            }
+            _rowHashes.Persist();
+            return accepted;
         }
 
         private async Task<SyncRow> TryBuildSyncRowAsync(
             SyncConfig cfg,
             PdfPipeline pipeline,
             ViewRow row,
+            string cloudPk,
             string rowHash,
             CancellationToken ct,
             Action onPdfFail)
         {
             var pdfMeta = new Dictionary<string, PdfMeta>(StringComparer.OrdinalIgnoreCase);
-            string cloudPk = RowIdentity(row);
+            if (string.IsNullOrEmpty(cloudPk))
+                cloudPk = RowIdentity(row);
 
             if (cfg.View.PdfUrlColumns != null)
             {
@@ -377,7 +375,7 @@ namespace IntranetSync.Core.Sync
                 {
                     if (string.IsNullOrWhiteSpace(col)) continue;
                     if (!seenPdfCols.Add(col.Trim()))
-                        continue; // 避免 PDF/pdf 重复列：第一次已把字段写成 oss_key，第二次会误当 URL 下载
+                        continue;
 
                     JToken tok;
                     if (!row.Fields.TryGetValue(col, out tok) || tok == null || tok.Type == JTokenType.Null)
@@ -399,16 +397,11 @@ namespace IntranetSync.Core.Sync
                             Error = resolved.Error
                         });
 
-                        if (cfg.Sync.FailBatchOnPdfError)
-                            throw new InvalidOperationException("PDF failed and FailBatchOnPdfError=true: " + resolved.Error);
-
-                        // 默认：整行跳过（不推云、不提交行哈希），等全表补齐/下轮再试。
                         _log.Warn("PDF failed, skip row (no push/hash) pk=" + (cloudPk ?? "")
                             + " col=" + col + " err=" + resolved.Error);
                         return null;
                     }
 
-                    // 字段与 pdf.url 只带 oss_key，不再写入预签名/公网访问链接
                     string keyOrUrl = !string.IsNullOrEmpty(resolved.OssKey) ? resolved.OssKey : resolved.CloudUrl;
                     row.Fields[col] = keyOrUrl;
                     pdfMeta[col] = new PdfMeta
@@ -421,16 +414,8 @@ namespace IntranetSync.Core.Sync
                 }
             }
 
-            if (string.IsNullOrEmpty(cloudPk) && row.Fields != null)
-            {
-                JToken pkTok;
-                if (row.Fields.TryGetValue(cfg.View.PrimaryKeyColumn ?? "", out pkTok) && pkTok != null && pkTok.Type != JTokenType.Null)
-                    cloudPk = pkTok.ToString();
-            }
-
             return new SyncRow
             {
-                // 云端 upsert 键 = 物理行身份（含 PDF），禁止只按 person_id 合并
                 PrimaryKey = cloudPk,
                 Watermark = row.Watermark,
                 RowHash = rowHash,
@@ -466,7 +451,6 @@ namespace IntranetSync.Core.Sync
             int accepted;
             if (resp.Accepted <= 0)
             {
-                // Legacy APIs may omit accepted; treat as full success only when no rejects.
                 _log.Warn("Cloud batch accepted<=0; assuming all " + batchRows.Count + " accepted (legacy response)");
                 accepted = batchRows.Count;
             }

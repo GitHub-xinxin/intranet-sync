@@ -62,10 +62,12 @@ namespace IntranetSync.Core.Config
     {
         public string ViewName { get; set; } = "";
         /// <summary>
-        /// 业务唯一列（如 person_id）。强烈建议配置：用于复合水位游标 + 主键补漏扫描，避免漏同步。
+        /// 检测记录唯一列（默认 person_id）：云端 upsert 键、水位并列游标、PDF 失败重试回查键。
         /// </summary>
-        public string PrimaryKeyColumn { get; set; } = "";
-        /// <summary>增量列；无唯一列时必填。为空则回退行哈希（需唯一列）。</summary>
+        public string PrimaryKeyColumn { get; set; } = "person_id";
+        /// <summary>
+        /// 报告生成/修改时间水位列。只顺序往后增加；报告修改时会变更，从而再次进入增量窗口。
+        /// </summary>
         public string IncrementalColumn { get; set; } = "updated_at";
         /// <summary>PDF URL 列名列表（可多列）。</summary>
         public List<string> PdfUrlColumns { get; set; } = new List<string> { "PDF" };
@@ -116,20 +118,24 @@ namespace IntranetSync.Core.Config
     public sealed class SyncRuntimeSettings
     {
         public int IntervalSeconds { get; set; } = 180;
-        /// <summary>是否按 IntervalSeconds 自动跑同步。默认 true（管理台「启用定时同步」默认勾选）；「停止同步」会写成 false。</summary>
+        /// <summary>是否按 IntervalSeconds 自动跑同步。默认 true；管理台「启动同步 / 停止同步」会改写此值。</summary>
         public bool Enabled { get; set; } = true;
         /// <summary>
-        /// true：任一 PDF 失败则整批中止、水位不前进。
-        /// false（默认）：该行不推送、不提交行哈希，其它行继续；靠全表补齐重试 PDF。
+        /// 已废弃：引擎固定为「仅跳过失败行」。保留字段兼容旧配置反序列化。
         /// </summary>
         public bool FailBatchOnPdfError { get; set; } = false;
         /// <summary>
-        /// 按间隔全表补齐一次：水位已经走过、后来才放进视图的历史行也会被补推；
-        /// 也用于重试「PDF 曾失败未提交哈希」的行。已成功的行只核对、不重新下载 PDF。
+        /// 已废弃：不再做周期性全表扫描。保留字段仅兼容旧配置反序列化；引擎忽略此开关。
         /// </summary>
-        public bool ReconcileEnabled { get; set; } = true;
-        /// <summary>全表补齐间隔（分钟）。默认 15。设为 0 表示每轮都补齐。</summary>
+        public bool ReconcileEnabled { get; set; } = false;
+        /// <summary>已废弃：见 ReconcileEnabled。保留兼容旧配置。</summary>
         public int ReconcileIntervalMinutes { get; set; } = 15;
+        /// <summary>
+        /// 每轮增量同步结束后，是否重试 pdf-failures 队列中的 person_id（回查视图 → PDF → upsert）。
+        /// </summary>
+        public bool PdfRetryEnabled { get; set; } = true;
+        /// <summary>每轮最多处理的 PDF 失败条数（按失败项计，会去重 person_id）。默认 100。</summary>
+        public int PdfRetryBatchSize { get; set; } = 100;
         /// <summary>
         /// 单轮同步最长秒数。超时则取消本轮并在下一间隔重试（水位未推进的数据会再推）。
         /// 0 = 不额外限制整轮（仍受每次 HTTP TimeoutSeconds 约束）。默认 1800（30 分钟）。

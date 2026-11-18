@@ -58,8 +58,8 @@
     <section>
       <h2>2. View 映射（要同步的视图）</h2>
       <p class="hint-block">
-        告诉程序从哪张<strong>SQL Server 视图</strong>读数据、如何按更新时间增量拉取，以及哪些列是内网 PDF 链接。
-        若不需要唯一键：唯一标识列<strong>留空</strong>，填好增量列（如 updated_at），则水位之后查出的记录会全部推送。
+        检测记录以 <strong>person_id</strong> 为唯一键（同一份报告修改后仍是同一条，云端 upsert 覆盖），
+        以 <strong>updated_at</strong> 为单调水位（报告生成/修改时间，只会往后走）。
       </p>
       <div class="grid">
         <label>
@@ -68,14 +68,14 @@
           <span class="hint">完整视图名，如 dbo.OrderListView（可带 schema）</span>
         </label>
         <label>
-          <span class="lbl">唯一标识列 <em>可选</em></span>
-          <input id="view.primaryKeyColumn" placeholder="可留空" />
-          <span class="hint">可留空。留空=不按唯一键去重，只按增量时间把查到的行全部推送；若填写则云端可用该列做 upsert</span>
+          <span class="lbl">唯一标识列 <em>person_id</em></span>
+          <input id="view.primaryKeyColumn" placeholder="person_id" />
+          <span class="hint">检测记录唯一 ID，默认 person_id；云端按此键 upsert，保证视图与云端条数对齐</span>
         </label>
         <label>
-          <span class="lbl">增量列 <em>必填（无唯一列时）</em></span>
+          <span class="lbl">增量列 / 水位 <em>updated_at</em></span>
           <input id="view.incrementalColumn" placeholder="updated_at" />
-          <span class="hint">如 updated_at；只同步大于上次水位的行。唯一标识列留空时此项必填</span>
+          <span class="hint">报告生成时间；修改报告会更新此时间并再次进入增量窗口</span>
         </label>
         <label>
           <span class="lbl">PDF 链接列 <em>PDF URL columns</em></span>
@@ -189,11 +189,7 @@
             <option value="basic">basic（基本认证）</option>
             <option value="ntlm">ntlm（Windows 集成）</option>
           </select>
-          <span class="hint">下载内网 PDF 链接时使用的认证方式</span>
-        </label>
-        <label class="check">
-          <input id="sync.failBatchOnPdfError" type="checkbox" />
-          PDF 失败则整批失败（默认关闭：失败行不推送/不记哈希，等全表补齐重试）
+          <span class="hint">下载内网 PDF 链接时使用的认证方式。单行 PDF 失败只跳过该行，不影响整批；失败项入队后每轮自动重试</span>
         </label>
       </div>
     </section>
@@ -201,7 +197,7 @@
     <section>
       <h2>6. 同步调度（整轮：查库 → PDF → 推云 API）</h2>
       <p class="hint-block">
-        这里控制<strong>整轮业务同步</strong>的频率，不是只同步 PDF。
+        定时同步默认开启。这里控制<strong>整轮业务同步</strong>的频率，不是只同步 PDF。
         每一轮都会：查询视图 →（如有）处理 PDF → 把行数据推到第 3 节配置的云 API。
       </p>
       <div class="grid">
@@ -214,10 +210,6 @@
           <span class="lbl">单轮最长（秒） <em>MaxRoundSeconds</em></span>
           <input id="sync.maxRoundSeconds" type="number" min="0" max="86400" placeholder="1800" />
           <span class="hint">整轮超时则取消并下一轮重试；0=不限制。默认 1800（30 分钟）</span>
-        </label>
-        <label class="check">
-          <input id="sync.enabled" type="checkbox" checked />
-          启用定时同步（默认勾选；勾选后按间隔自动跑）
         </label>
       </div>
       <div class="actions">
@@ -245,7 +237,7 @@
             <h3>PDF 失败队列 Failures</h3>
             <button type="button" id="btnClearFailures" class="danger small">清除失败记录</button>
           </div>
-          <p class="hint-block">失败行不会推云端；保持 <em>ReconcileEnabled</em>（默认开）时，约每 15 分钟全表补齐会自动重试下载并上传 OSS。</p>
+          <p class="hint-block">失败行不会推云端，但水位继续前进；每轮同步结束会按 <em>person_id</em> 回查视图并重试 PDF（替代原 15 分钟全表扫描）。队列清空后，视图条数应与云端一致。</p>
           <pre id="failures" class="out tall"></pre>
         </div>
       </div>

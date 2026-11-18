@@ -71,6 +71,41 @@ namespace IntranetSync.Core.Sync
             }
         }
 
+        /// <summary>按视图取待重试项（最老优先，便于先清历史失败）。</summary>
+        public IList<FailureItem> ListForView(string viewName, int take = 100)
+        {
+            lock (_gate)
+            {
+                return _items
+                    .Where(x => string.Equals(x.ViewName, viewName, StringComparison.OrdinalIgnoreCase))
+                    .OrderBy(x => x.FailedAtUtc)
+                    .Take(take > 0 ? take : 100)
+                    .ToList();
+            }
+        }
+
+        public int CountForView(string viewName)
+        {
+            lock (_gate)
+            {
+                return _items.Count(x =>
+                    string.Equals(x.ViewName, viewName, StringComparison.OrdinalIgnoreCase));
+            }
+        }
+
+        /// <summary>视图中已不存在该 person_id 时，清掉其全部 PDF 失败项。</summary>
+        public void RemoveAllForPrimaryKey(string viewName, string primaryKey)
+        {
+            lock (_gate)
+            {
+                int n = _items.RemoveAll(x =>
+                    string.Equals(x.ViewName, viewName, StringComparison.OrdinalIgnoreCase)
+                    && PersonIdEquals(x.PrimaryKey, primaryKey));
+                if (n > 0)
+                    Persist();
+            }
+        }
+
         public void Clear()
         {
             lock (_gate)
@@ -83,8 +118,26 @@ namespace IntranetSync.Core.Sync
         private static bool SameKey(FailureItem x, string viewName, string primaryKey, string pdfColumn)
         {
             return string.Equals(x.ViewName, viewName, StringComparison.OrdinalIgnoreCase)
-                && string.Equals(x.PrimaryKey, primaryKey, StringComparison.OrdinalIgnoreCase)
+                && PersonIdEquals(x.PrimaryKey, primaryKey)
                 && string.Equals(x.PdfColumn, pdfColumn, StringComparison.OrdinalIgnoreCase);
+        }
+
+        /// <summary>兼容旧复合键 person_id|updated_at|pdf 与纯 person_id。</summary>
+        private static bool PersonIdEquals(string stored, string query)
+        {
+            string a = NormalizePersonId(stored);
+            string b = NormalizePersonId(query);
+            return string.Equals(a, b, StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static string NormalizePersonId(string raw)
+        {
+            if (string.IsNullOrWhiteSpace(raw)) return "";
+            string s = raw.Trim();
+            int pipe = s.IndexOf('|');
+            if (pipe > 0)
+                s = s.Substring(0, pipe).Trim();
+            return s;
         }
 
         private void Load()

@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Data;
 using System.Data.SqlClient;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using IntranetSync.Core.Config;
@@ -163,6 +164,72 @@ namespace IntranetSync.Core.Sync
                     return Convert.ToInt32(scalar);
                 }
             }
+        }
+
+        /// <summary>
+        /// 按唯一键（person_id）回查视图行，供 PDF 失败重试使用。
+        /// </summary>
+        public async Task<IList<ViewRow>> ReadByPrimaryKeysAsync(
+            SqlSettings sql,
+            ViewSettings view,
+            IList<string> primaryKeys,
+            CancellationToken ct)
+        {
+            if (string.IsNullOrWhiteSpace(view.ViewName))
+                throw new InvalidOperationException("View name is required");
+            if (string.IsNullOrWhiteSpace(view.PrimaryKeyColumn))
+                throw new InvalidOperationException("PrimaryKeyColumn is required for PDF retry lookup");
+            if (primaryKeys == null || primaryKeys.Count == 0)
+                return new List<ViewRow>();
+
+            bool useIncremental = !string.IsNullOrWhiteSpace(view.IncrementalColumn);
+            bool hasPk = true;
+            var keys = primaryKeys
+                .Where(k => !string.IsNullOrWhiteSpace(k))
+                .Select(k => k.Trim())
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+            if (keys.Count == 0)
+                return new List<ViewRow>();
+
+            var rows = new List<ViewRow>();
+            const int chunkSize = 100;
+            using (var conn = new SqlConnection(sql.BuildConnectionString()))
+            {
+                await conn.OpenAsync(ct).ConfigureAwait(false);
+                for (int offset = 0; offset < keys.Count; offset += chunkSize)
+                {
+                    ct.ThrowIfCancellationRequested();
+                    int n = Math.Min(chunkSize, keys.Count - offset);
+                    var paramNames = new string[n];
+                    using (var cmd = new SqlCommand())
+                    {
+                        cmd.Connection = conn;
+                        for (int i = 0; i < n; i++)
+                        {
+                            paramNames[i] = "@pk" + i;
+                            cmd.Parameters.Add(new SqlParameter(paramNames[i], keys[offset + i]));
+                        }
+
+                        cmd.CommandText = string.Format(
+                            "SELECT * FROM {0} WHERE {1} IN ({2})",
+                            Bracket(view.ViewName),
+                            Bracket(view.PrimaryKeyColumn),
+                            string.Join(",", paramNames));
+
+                        _log.Debug("SQL by-pk view=" + view.ViewName + " keys=" + n);
+
+                        using (var reader = await cmd.ExecuteReaderAsync(CommandBehavior.SequentialAccess, ct)
+                            .ConfigureAwait(false))
+                        {
+                            while (await reader.ReadAsync(ct).ConfigureAwait(false))
+                                rows.Add(MapRow(reader, view, useIncremental, hasPk));
+                        }
+                    }
+                }
+            }
+
+            return rows;
         }
 
         /// <summary>

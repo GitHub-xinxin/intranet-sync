@@ -13,9 +13,9 @@ namespace IntranetSync.Core.Sync
         /// <summary>Last primary key at the current watermark (composite cursor).</summary>
         public string LastPrimaryKey { get; set; }
         public string LastRowHashModeCursor { get; set; }
-        /// <summary>历史缺口已按全表补齐过。之后每轮只从水位增量查询。</summary>
+        /// <summary>已废弃：引擎不再做周期性全表补齐。保留字段兼容旧 watermarks.json。</summary>
         public bool FullReconcileCompleted { get; set; }
-        /// <summary>上次全表补齐完成时间（UTC）。到期后会再扫一遍，补上后放入视图的历史行。</summary>
+        /// <summary>已废弃：见 FullReconcileCompleted。</summary>
         public DateTime? LastFullReconcileAt { get; set; }
     }
 

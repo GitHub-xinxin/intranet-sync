@@ -141,6 +141,10 @@ namespace IntranetSync.Admin
                     var incoming = JsonConvert.DeserializeObject<SyncConfig>(body, _jsonSettings) ?? new SyncConfig();
                     MergeSecrets(existing, incoming);
                     NormalizeViewColumns(incoming);
+                    if (incoming.Sync == null) incoming.Sync = new SyncRuntimeSettings();
+                    // PDF：固定只跳失败行。定时开关仅由「启动/停止同步」改写，保存配置不覆盖。
+                    incoming.Sync.FailBatchOnPdfError = false;
+                    incoming.Sync.Enabled = existing.Sync != null ? existing.Sync.Enabled : true;
                     _store.Save(incoming);
                     _log.Info("Config saved (secrets encrypted at rest)");
                     await WriteJsonAsync(ctx, 200, SyncConfigDto.FromConfig(incoming)).ConfigureAwait(false);
@@ -268,9 +272,10 @@ namespace IntranetSync.Admin
             if (cfg == null || cfg.View == null) return false;
             bool changed = false;
 
-            if (string.Equals(cfg.View.PrimaryKeyColumn, "Id", StringComparison.Ordinal))
+            if (string.Equals(cfg.View.PrimaryKeyColumn, "Id", StringComparison.Ordinal)
+                || string.IsNullOrWhiteSpace(cfg.View.PrimaryKeyColumn))
             {
-                cfg.View.PrimaryKeyColumn = "";
+                cfg.View.PrimaryKeyColumn = "person_id";
                 changed = true;
             }
             if (string.Equals(cfg.View.IncrementalColumn, "UpdatedAt", StringComparison.Ordinal))

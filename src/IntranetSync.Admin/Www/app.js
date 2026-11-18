@@ -24,8 +24,8 @@
     setVal("sql.integratedSecurity", cfg.sql && cfg.sql.integratedSecurity);
 
     setVal("view.viewName", cfg.view && cfg.view.viewName);
-    var pk = (cfg.view && cfg.view.primaryKeyColumn) || "";
-    if (pk === "Id") pk = "";
+    var pk = (cfg.view && cfg.view.primaryKeyColumn) || "person_id";
+    if (pk === "Id") pk = "person_id";
     setVal("view.primaryKeyColumn", pk);
     var inc = (cfg.view && cfg.view.incrementalColumn) || "updated_at";
     if (inc === "UpdatedAt") inc = "updated_at";
@@ -53,9 +53,6 @@
     setVal("pdf.authMode", (cfg.pdf && cfg.pdf.authMode) || "anonymous");
     setVal("sync.intervalSeconds", cfg.sync && cfg.sync.intervalSeconds);
     setVal("sync.maxRoundSeconds", (cfg.sync && cfg.sync.maxRoundSeconds != null) ? cfg.sync.maxRoundSeconds : 1800);
-    // 缺省 / 未写 enabled 时视为开启（与 SyncRuntimeSettings.Enabled 默认 true 一致）
-    setVal("sync.enabled", !(cfg.sync && cfg.sync.enabled === false));
-    setVal("sync.failBatchOnPdfError", cfg.sync && cfg.sync.failBatchOnPdfError);
   }
 
   function normalizePdfColumns(cols) {
@@ -92,8 +89,8 @@
       },
       view: {
         viewName: getVal("view.viewName"),
-        primaryKeyColumn: getVal("view.primaryKeyColumn"),
-        incrementalColumn: getVal("view.incrementalColumn"),
+        primaryKeyColumn: getVal("view.primaryKeyColumn") || "person_id",
+        incrementalColumn: getVal("view.incrementalColumn") || "updated_at",
         pdfUrlColumns: pdfCols,
         pageSize: getVal("view.pageSize") || 300
       },
@@ -122,8 +119,10 @@
       sync: {
         intervalSeconds: getVal("sync.intervalSeconds") || 180,
         maxRoundSeconds: getVal("sync.maxRoundSeconds") != null ? getVal("sync.maxRoundSeconds") : 1800,
-        enabled: getVal("sync.enabled"),
-        failBatchOnPdfError: getVal("sync.failBatchOnPdfError")
+        failBatchOnPdfError: false,
+        reconcileEnabled: false,
+        pdfRetryEnabled: true,
+        pdfRetryBatchSize: 100
       },
       admin: {
         bindAddress: "127.0.0.1",
@@ -252,7 +251,6 @@
     $("btnStart").onclick = function () {
       api("/api/sync/start", "POST", {})
         .then(function (r) {
-          setVal("sync.enabled", true);
           show("actionResult", r);
           return refreshStatus();
         })
@@ -261,7 +259,6 @@
     $("btnStop").onclick = function () {
       api("/api/sync/stop", "POST", {})
         .then(function (r) {
-          setVal("sync.enabled", false);
           show("actionResult", r);
           return refreshStatus();
         })
