@@ -100,7 +100,7 @@ namespace IntranetSync.Core.Sync
             {
                 int n = _items.RemoveAll(x =>
                     string.Equals(x.ViewName, viewName, StringComparison.OrdinalIgnoreCase)
-                    && PersonIdEquals(x.PrimaryKey, primaryKey));
+                    && string.Equals(x.PrimaryKey, primaryKey, StringComparison.OrdinalIgnoreCase));
                 if (n > 0)
                     Persist();
             }
@@ -118,26 +118,8 @@ namespace IntranetSync.Core.Sync
         private static bool SameKey(FailureItem x, string viewName, string primaryKey, string pdfColumn)
         {
             return string.Equals(x.ViewName, viewName, StringComparison.OrdinalIgnoreCase)
-                && PersonIdEquals(x.PrimaryKey, primaryKey)
+                && string.Equals(x.PrimaryKey, primaryKey, StringComparison.OrdinalIgnoreCase)
                 && string.Equals(x.PdfColumn, pdfColumn, StringComparison.OrdinalIgnoreCase);
-        }
-
-        /// <summary>兼容旧复合键 person_id|updated_at|pdf 与纯 person_id。</summary>
-        private static bool PersonIdEquals(string stored, string query)
-        {
-            string a = NormalizePersonId(stored);
-            string b = NormalizePersonId(query);
-            return string.Equals(a, b, StringComparison.OrdinalIgnoreCase);
-        }
-
-        private static string NormalizePersonId(string raw)
-        {
-            if (string.IsNullOrWhiteSpace(raw)) return "";
-            string s = raw.Trim();
-            int pipe = s.IndexOf('|');
-            if (pipe > 0)
-                s = s.Substring(0, pipe).Trim();
-            return s;
         }
 
         private void Load()

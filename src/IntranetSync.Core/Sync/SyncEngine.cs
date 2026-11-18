@@ -245,17 +245,6 @@ namespace IntranetSync.Core.Sync
             return "";
         }
 
-        /// <summary>失败队列旧复合键 → person_id。</summary>
-        private static string NormalizePersonIdKey(string raw)
-        {
-            if (string.IsNullOrWhiteSpace(raw)) return "";
-            string s = raw.Trim();
-            int pipe = s.IndexOf('|');
-            if (pipe > 0)
-                s = s.Substring(0, pipe).Trim();
-            return s;
-        }
-
         /// <summary>
         /// 从失败队列按 person_id 回查视图，重新跑 PDF → upsert；成功则出队。
         /// </summary>
@@ -271,11 +260,9 @@ namespace IntranetSync.Core.Sync
             if (pending == null || pending.Count == 0)
                 return 0;
 
-            // 旧队列可能存过 person_id|updated_at|pdf 复合键；重试只取第一段 person_id。
             var keys = pending
                 .Where(x => !string.IsNullOrWhiteSpace(x.PrimaryKey))
-                .Select(x => NormalizePersonIdKey(x.PrimaryKey))
-                .Where(k => !string.IsNullOrEmpty(k))
+                .Select(x => x.PrimaryKey.Trim())
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .ToList();
 
